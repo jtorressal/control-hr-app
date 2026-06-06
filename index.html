@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Control Hojas de Ruta</title>
+
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 12px;
+      background: #f4f4f4;
+    }
+
+    h2 {
+      margin-top: 0;
+      text-align: center;
+    }
+
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 5px rgba(0,0,0,0.18);
+    }
+
+    label {
+      display: block;
+      font-weight: bold;
+      margin-top: 10px;
+    }
+
+    select,
+    input,
+    textarea,
+    button {
+      width: 100%;
+      box-sizing: border-box;
+      font-size: 17px;
+      padding: 12px;
+      margin-top: 5px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+    }
+
+    button {
+      border: none;
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 12px;
+    }
+
+    .btn-primary {
+      background: #1a73e8;
+      color: white;
+    }
+
+    .btn-ok {
+      background: #188038;
+      color: white;
+    }
+
+    .btn-warn {
+      background: #f9ab00;
+      color: black;
+    }
+
+    .btn-danger {
+      background: #d93025;
+      color: white;
+    }
+
+    .btn-gray {
+      background: #5f6368;
+      color: white;
+    }
+
+    .dato {
+      margin: 6px 0;
+      font-size: 16px;
+    }
+
+    .titulo-hr {
+      font-size: 24px;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .ok {
+      color: #188038;
+      font-weight: bold;
+    }
+
+    .error {
+      color: #d93025;
+      font-weight: bold;
+    }
+
+    .alerta {
+      color: #f57c00;
+      font-weight: bold;
+      margin-top: 6px;
+    }
+
+    #reader {
+      width: 100%;
+      background: white;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid #ddd;
+      margin: 12px 0;
+    }
+
+    .small {
+      font-size: 13px;
+      color: #555;
+      margin-top: 6px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h2>Control Hojas de Ruta</h2>
+
+  <div class="card">
+    <label>Modo</label>
+    <select id="modo" onchange="actualizarModo()">
+      <option value="SALIDA">SALIDA</option>
+      <option value="RETORNO">RETORNO PAPEL</option>
+      <option value="INCIDENCIA">INCIDENCIA</option>
+    </select>
+
+    <label>
+      <input type="checkbox" id="escaneoContinuo" checked style="width:auto;">
+      Escaneo continuo después de confirmar
+    </label>
+
+    <button class="btn-primary" onclick="iniciarScanner()">Escanear QR</button>
+    <button class="btn-gray" onclick="detenerScanner()">Detener cámara</button>
+
+    <div class="small">
+      El QR debe contener solo el TokenQR. Si falla el escaneo, podés buscar manualmente por HR o TokenQR.
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="reader"></div>
+  </div>
+
+  <div class="card">
+    <label>Buscar manualmente</label>
+    <input id="busquedaManual" placeholder="Escribir HR o TokenQR">
+    <button class="btn-primary" onclick="buscarManual()">Buscar</button>
+  </div>
+
+  <div class="card hidden" id="cardDatos">
+    <div class="titulo-hr">HR: <span id="hr"></span></div>
+
+    <div class="dato"><b>Cliente:</b> <span id="cliente"></span></div>
+    <div class="dato"><b>Dirección:</b> <span id="direccion"></span></div>
+
+    <hr>
+
+    <div class="dato"><b>Chofer planificado:</b> <span id="choferPlanificado"></span></div>
+    <div class="dato"><b>Vuelta planificada:</b> <span id="vueltaPlanificada"></span></div>
+
+    <hr>
+
+    <div class="dato"><b>Estado actual:</b> <span id="estadoActual"></span></div>
+    <div class="dato"><b>Chofer salida:</b> <span id="choferSalida"></span></div>
+    <div class="dato"><b>Vuelta salida:</b> <span id="vueltaSalida"></span></div>
+    <div class="dato"><b>Hora salida:</b> <span id="horaSalida"></span></div>
+    <div class="dato"><b>Hora retorno:</b> <span id="horaRetorno"></span></div>
+    <div class="dato"><b>Estado retorno:</b> <span id="estadoRetorno"></span></div>
+
+    <div id="alertas"></div>
+
+    <div id="panelSalida">
+      <hr>
+      <label>Chofer real de salida</label>
+      <select id="choferReal"></select>
+
+      <label>Vuelta real</label>
+      <select id="vueltaReal"></select>
+
+      <label>Observación salida</label>
+      <textarea id="observacionSalida" rows="3" placeholder="Opcional"></textarea>
+
+      <button class="btn-ok" onclick="confirmarSalida()">Confirmar salida</button>
+    </div>
+
+    <div id="panelRetorno" class="hidden">
+      <hr>
+      <label>Estado del retorno</label>
+      <select id="estadoRetornoInput"></select>
+
+      <label>Observación retorno</label>
+      <textarea id="observacionRetorno" rows="3" placeholder="Opcional"></textarea>
+
+      <button class="btn-ok" onclick="confirmarRetorno()">Confirmar retorno</button>
+    </div>
+
+    <div id="panelIncidencia" class="hidden">
+      <hr>
+      <label>Observación de incidencia</label>
+      <textarea id="observacionIncidencia" rows="3" placeholder="Ejemplo: no volvió el papel, lo trajo otro chofer, papel incompleto"></textarea>
+
+      <button class="btn-danger" onclick="confirmarIncidencia()">Registrar incidencia</button>
+    </div>
+
+    <button class="btn-warn" onclick="limpiar()">Escanear otra HR</button>
+  </div>
+
+  <div id="mensaje"></div>
+
+<script>
+  /****************************************************
+   * CONFIGURACIÓN
+   * Pegá acá tu URL de Apps Script y tu API_KEY
+   ****************************************************/
+
+  const API_URL = 'https://script.google.com/macros/s/AKfycbwKoiUSnTSQmZUYQ_8icYHS0f0gEI1Mdo8Y8d5k8m9EwOP899yjpS3aqFf8wjs32JnF/exec';
+  const API_KEY = 'CONTROLHR2026';
+
+
+  /****************************************************
+   * VARIABLES
+   ****************************************************/
+
+  let html5QrCode = null;
+  let scannerActivo = false;
+
+  let codigoActual = null;
+  let hrActual = null;
+
+
+  /****************************************************
+   * INICIO
+   ****************************************************/
+
+  window.onload = function() {
+    actualizarModo();
+    configurarEnterManual();
+    obtenerDatosIniciales();
+  };
+
+
+  function configurarEnterManual() {
+    const input = document.getElementById('busquedaManual');
+
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        buscarManual();
+      }
+    });
+  }
+
+
+  /****************************************************
+   * API JSONP
+   ****************************************************/
+
+  function apiCall(action, params = {}) {
+    return new Promise(function(resolve, reject) {
+      const callbackName = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
+
+      const query = new URLSearchParams();
+      query.set('api', '1');
+      query.set('key', API_KEY);
+      query.set('action', action);
+      query.set('callback', callbackName);
+
+      Object.keys(params).forEach(function(k) {
+        query.set(k, params[k] || '');
+      });
+
+      window[callbackName] = function(data) {
+        delete window[callbackName];
+        script.remove();
+        resolve(data);
+      };
+
+      const script = document.createElement('script');
+      script.src = API_URL + '?' + query.toString();
+
+      script.onerror = function() {
+        delete window[callbackName];
+        script.remove();
+        reject(new Error('No se pudo conectar con Apps Script.'));
+      };
+
+      document.body.appendChild(script);
+    });
+  }
+
+
+  /****************************************************
+   * DATOS INICIALES
+   ****************************************************/
+
+  function obtenerDatosIniciales() {
+    mostrarMensaje('Conectando con la planilla...', '');
+
+    apiCall('datosIniciales')
+      .then(function(res) {
+        if (!res.ok) {
+          mostrarMensaje(res.mensaje || 'No se pudieron cargar los datos iniciales.', 'error');
+          return;
+        }
+
+        cargarSelect('choferReal', res.choferes || []);
+        cargarSelect('vueltaReal', res.vueltas || []);
+        cargarSelect('estadoRetornoInput', res.estadosRetorno || []);
+
+        mostrarMensaje('App lista para usar.', 'ok');
+      })
+      .catch(function(err) {
+        mostrarMensaje(err.message, 'error');
+      });
+  }
+
+
+  function cargarSelect(id, lista) {
+    const sel = document.getElementById(id);
+    sel.innerHTML = '';
+
+    lista.forEach(function(valor) {
+      const opt = document.createElement('option');
+      opt.value = valor;
+      opt.textContent = valor;
+      sel.appendChild(opt);
+    });
+  }
+
+
+  /****************************************************
+   * MODO
+   ****************************************************/
+
+  function actualizarModo() {
+    const modo = document.getElementById('modo').value;
+
+    document.getElementById('panelSalida').classList.add('hidden');
+    document.getElementById('panelRetorno').classList.add('hidden');
+    document.getElementById('panelIncidencia').classList.add('hidden');
+
+    if (modo === 'SALIDA') {
+      document.getElementById('panelSalida').classList.remove('hidden');
+    }
+
+    if (modo === 'RETORNO') {
+      document.getElementById('panelRetorno').classList.remove('hidden');
+    }
+
+    if (modo === 'INCIDENCIA') {
+      document.getElementById('panelIncidencia').classList.remove('hidden');
+    }
+  }
+
+
+  /****************************************************
+   * ESCÁNER QR
+   ****************************************************/
+
+  function iniciarScanner() {
+    mostrarMensaje('Iniciando cámara...', '');
+
+    const reader = document.getElementById('reader');
+    reader.innerHTML = '';
+
+    if (!html5QrCode) {
+      html5QrCode = new Html5Qrcode('reader');
+    }
+
+    if (scannerActivo) {
+      return;
+    }
+
+    const config = {
+      fps: 10,
+      qrbox: { width: 250, height: 250 }
+    };
+
+    html5QrCode.start(
+      { facingMode: 'environment' },
+      config,
+      function(decodedText) {
+        detenerScanner(false);
+        buscarCodigo(decodedText);
+      },
+      function(errorMessage) {
+        // No mostramos errores de lectura continua.
+      }
+    ).then(function() {
+      scannerActivo = true;
+      mostrarMensaje('Cámara activa. Apuntá al QR.', 'ok');
+    }).catch(function(err) {
+      scannerActivo = false;
+      mostrarMensaje(
+        'No se pudo abrir la cámara. Revisá permisos del navegador. También podés buscar manualmente por HR o TokenQR. Error: ' + err,
+        'error'
+      );
+    });
+  }
+
+
+  function detenerScanner(mostrar) {
+    if (!html5QrCode || !scannerActivo) {
+      if (mostrar !== false) {
+        mostrarMensaje('La cámara no está activa.', '');
+      }
+      return;
+    }
+
+    html5QrCode.stop().then(function() {
+      scannerActivo = false;
+      document.getElementById('reader').innerHTML = '';
+
+      if (mostrar !== false) {
+        mostrarMensaje('Cámara detenida.', '');
+      }
+    }).catch(function(err) {
+      scannerActivo = false;
+    });
+  }
+
+
+  /****************************************************
+   * BÚSQUEDA
+   ****************************************************/
+
+  function buscarManual() {
+    const codigo = document.getElementById('busquedaManual').value.trim();
+
+    if (!codigo) {
+      mostrarMensaje('Escribí una HR o TokenQR.', 'error');
+      return;
+    }
+
+    buscarCodigo(codigo);
+  }
+
+
+  function buscarCodigo(codigo) {
+    mostrarMensaje('Buscando hoja de ruta...', '');
+
+    apiCall('buscarHR', {
+      codigo: codigo
+    }).then(function(res) {
+      if (!res.ok) {
+        mostrarMensaje(res.mensaje || 'No encontré la HR.', 'error');
+        return;
+      }
+
+      mostrarDatos(res);
+    }).catch(function(err) {
+      mostrarMensaje(err.message, 'error');
+    });
+  }
+
+
+  function mostrarDatos(res) {
+    codigoActual = res.token || res.hr;
+    hrActual = res.hr;
+
+    document.getElementById('hr').textContent = res.hr;
+    document.getElementById('cliente').textContent = res.cliente;
+    document.getElementById('direccion').textContent = res.direccion;
+    document.getElementById('choferPlanificado').textContent = res.choferPlanificado;
+    document.getElementById('vueltaPlanificada').textContent = res.vueltaPlanificada;
+    document.getElementById('estadoActual').textContent = res.estadoActual;
+    document.getElementById('choferSalida').textContent = res.choferSalida;
+    document.getElementById('vueltaSalida').textContent = res.vueltaSalida;
+    document.getElementById('horaSalida').textContent = res.horaSalida;
+    document.getElementById('horaRetorno').textContent = res.horaRetorno;
+    document.getElementById('estadoRetorno').textContent = res.estadoRetorno;
+
+    seleccionarValor('choferReal', res.choferSalida || res.choferPlanificado);
+    seleccionarValor('vueltaReal', res.vueltaSalida || res.vueltaPlanificada);
+
+    generarAlertas(res);
+
+    document.getElementById('cardDatos').classList.remove('hidden');
+
+    actualizarModo();
+
+    mostrarMensaje('HR encontrada. Revisá los datos y confirmá.', 'ok');
+  }
+
+
+  function seleccionarValor(id, valor) {
+    if (!valor) return;
+
+    const sel = document.getElementById(id);
+    let existe = false;
+
+    for (let i = 0; i < sel.options.length; i++) {
+      if (sel.options[i].value === valor) {
+        existe = true;
+        break;
+      }
+    }
+
+    if (!existe) {
+      const opt = document.createElement('option');
+      opt.value = valor;
+      opt.textContent = valor;
+      sel.appendChild(opt);
+    }
+
+    sel.value = valor;
+  }
+
+
+  function generarAlertas(res) {
+    let html = '';
+
+    if (String(res.estadoActual).toUpperCase() === 'EN CALLE') {
+      html += '<div class="alerta">Atención: esta HR ya figura EN CALLE.</div>';
+    }
+
+    if (String(res.estadoActual).toUpperCase() === 'RETORNADA') {
+      html += '<div class="alerta">Atención: esta HR ya figura RETORNADA.</div>';
+    }
+
+    if (res.choferSalida && res.choferPlanificado && res.choferSalida !== res.choferPlanificado) {
+      html += '<div class="alerta">Chofer real distinto al planificado.</div>';
+    }
+
+    if (res.vueltaSalida && res.vueltaPlanificada && res.vueltaSalida !== res.vueltaPlanificada) {
+      html += '<div class="alerta">Vuelta real distinta a la planificada.</div>';
+    }
+
+    document.getElementById('alertas').innerHTML = html;
+  }
+
+
+  /****************************************************
+   * REGISTROS
+   ****************************************************/
+
+  function confirmarSalida() {
+    if (!codigoActual) {
+      mostrarMensaje('Primero escaneá o buscá una HR.', 'error');
+      return;
+    }
+
+    mostrarMensaje('Registrando salida...', '');
+
+    apiCall('registrarSalida', {
+      codigo: codigoActual,
+      chofer: document.getElementById('choferReal').value,
+      vuelta: document.getElementById('vueltaReal').value,
+      observacion: document.getElementById('observacionSalida').value
+    }).then(function(res) {
+      if (!res.ok) {
+        mostrarMensaje(res.mensaje || 'No se pudo registrar salida.', 'error');
+        return;
+      }
+
+      mostrarMensaje(res.mensaje, 'ok');
+      limpiar();
+
+      if (document.getElementById('escaneoContinuo').checked) {
+        setTimeout(function() {
+          iniciarScanner();
+        }, 700);
+      }
+    }).catch(function(err) {
+      mostrarMensaje(err.message, 'error');
+    });
+  }
+
+
+  function confirmarRetorno() {
+    if (!codigoActual) {
+      mostrarMensaje('Primero escaneá o buscá una HR.', 'error');
+      return;
+    }
+
+    mostrarMensaje('Registrando retorno...', '');
+
+    apiCall('registrarRetorno', {
+      codigo: codigoActual,
+      estadoRetorno: document.getElementById('estadoRetornoInput').value,
+      observacion: document.getElementById('observacionRetorno').value
+    }).then(function(res) {
+      if (!res.ok) {
+        mostrarMensaje(res.mensaje || 'No se pudo registrar retorno.', 'error');
+        return;
+      }
+
+      mostrarMensaje(res.mensaje, 'ok');
+      limpiar();
+
+      if (document.getElementById('escaneoContinuo').checked) {
+        setTimeout(function() {
+          iniciarScanner();
+        }, 700);
+      }
+    }).catch(function(err) {
+      mostrarMensaje(err.message, 'error');
+    });
+  }
+
+
+  function confirmarIncidencia() {
+    if (!codigoActual) {
+      mostrarMensaje('Primero escaneá o buscá una HR.', 'error');
+      return;
+    }
+
+    mostrarMensaje('Registrando incidencia...', '');
+
+    apiCall('registrarIncidencia', {
+      codigo: codigoActual,
+      observacion: document.getElementById('observacionIncidencia').value
+    }).then(function(res) {
+      if (!res.ok) {
+        mostrarMensaje(res.mensaje || 'No se pudo registrar incidencia.', 'error');
+        return;
+      }
+
+      mostrarMensaje(res.mensaje, 'ok');
+      limpiar();
+
+      if (document.getElementById('escaneoContinuo').checked) {
+        setTimeout(function() {
+          iniciarScanner();
+        }, 700);
+      }
+    }).catch(function(err) {
+      mostrarMensaje(err.message, 'error');
+    });
+  }
+
+
+  /****************************************************
+   * LIMPIEZA
+   ****************************************************/
+
+  function limpiar() {
+    codigoActual = null;
+    hrActual = null;
+
+    document.getElementById('cardDatos').classList.add('hidden');
+    document.getElementById('busquedaManual').value = '';
+    document.getElementById('observacionSalida').value = '';
+    document.getElementById('observacionRetorno').value = '';
+    document.getElementById('observacionIncidencia').value = '';
+    document.getElementById('alertas').innerHTML = '';
+
+    setTimeout(function() {
+      document.getElementById('busquedaManual').focus();
+    }, 100);
+  }
+
+
+  function mostrarMensaje(texto, tipo) {
+    const div = document.getElementById('mensaje');
+    div.className = 'card ' + tipo;
+    div.innerHTML = texto;
+  }
+</script>
+
+</body>
+</html>
