@@ -274,18 +274,42 @@
   function apiCall(action, params = {}) {
   return new Promise(function(resolve, reject) {
     const callbackName = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
+    let terminado = false;
 
     const query = new URLSearchParams();
     query.set('api', '1');
     query.set('key', API_KEY);
     query.set('action', action);
     query.set('callback', callbackName);
+    query.set('_', Date.now()); // evita caché
 
     Object.keys(params).forEach(function(k) {
       query.set(k, params[k] == null ? '' : String(params[k]));
     });
 
+    const script = document.createElement('script');
+
+    const timer = setTimeout(function() {
+      if (terminado) return;
+
+      terminado = true;
+
+      try {
+        delete window[callbackName];
+        if (script && script.parentNode) {
+          script.parentNode.removeChild(script);
+        }
+      } catch (e) {}
+
+      reject(new Error('No respondió Apps Script. Revisá que API_URL termine en /exec y que la implementación esté publicada para cualquier persona.'));
+    }, 15000);
+
     window[callbackName] = function(data) {
+      if (terminado) return;
+
+      terminado = true;
+      clearTimeout(timer);
+
       try {
         delete window[callbackName];
         if (script && script.parentNode) {
@@ -296,25 +320,18 @@
       resolve(data);
     };
 
-    const script = document.createElement('script');
     script.async = true;
     script.src = API_URL.trim() + '?' + query.toString();
 
     script.onerror = function() {
-      try {
-        delete window[callbackName];
-        if (script && script.parentNode) {
-          script.parentNode.removeChild(script);
-        }
-      } catch (e) {}
-
-      reject(new Error('No se pudo conectar con Apps Script. Revisá API_URL, API_KEY y que la implementación esté publicada para cualquier persona.'));
+      // No rechazamos inmediatamente porque Apps Script a veces dispara error
+      // aunque el callback JSONP termine respondiendo.
+      console.warn('Advertencia: evento onerror del script JSONP.');
     };
 
     document.body.appendChild(script);
   });
 }
-
 
   /****************************************************
    * DATOS INICIALES
