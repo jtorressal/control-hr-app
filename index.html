@@ -374,67 +374,87 @@
    ****************************************************/
 
   function iniciarScanner() {
-    mostrarMensaje('Iniciando cámara...', '');
+  mostrarMensaje('Iniciando cámara...', '');
 
-    const reader = document.getElementById('reader');
-    reader.innerHTML = '';
+  const reader = document.getElementById('reader');
+  reader.innerHTML = '';
 
-    if (!html5QrCode) {
-      html5QrCode = new Html5Qrcode('reader');
-    }
-
-    if (scannerActivo) {
-      return;
-    }
-
-    const config = {
-      fps: 10,
-      qrbox: { width: 250, height: 250 }
-    };
-
-    html5QrCode.start(
-      { facingMode: 'environment' },
-      config,
-      function(decodedText) {
-        detenerScanner(false);
-        buscarCodigo(decodedText);
-      },
-      function(errorMessage) {
-        // No mostramos errores de lectura continua.
-      }
-    ).then(function() {
-      scannerActivo = true;
-      mostrarMensaje('Cámara activa. Apuntá al QR.', 'ok');
-    }).catch(function(err) {
-      scannerActivo = false;
-      mostrarMensaje(
-        'No se pudo abrir la cámara. Revisá permisos del navegador. También podés buscar manualmente por HR o TokenQR. Error: ' + err,
-        'error'
-      );
-    });
+  if (scannerActivo) {
+    mostrarMensaje('La cámara ya está activa.', '');
+    return;
   }
+
+  html5QrCode = new Html5Qrcode('reader');
+
+  const config = {
+    fps: 10,
+    qrbox: { width: 250, height: 250 }
+  };
+
+  html5QrCode.start(
+    { facingMode: 'environment' },
+    config,
+    function(decodedText) {
+      detenerScanner(false).then(function() {
+        buscarCodigo(decodedText);
+      });
+    },
+    function(errorMessage) {
+      // No mostramos errores de lectura continua.
+    }
+  ).then(function() {
+    scannerActivo = true;
+    mostrarMensaje('Cámara activa. Apuntá al QR.', 'ok');
+  }).catch(function(err) {
+    scannerActivo = false;
+    html5QrCode = null;
+    document.getElementById('reader').innerHTML = '';
+
+    mostrarMensaje(
+      'No se pudo abrir la cámara. Revisá permisos del navegador. Error: ' + err,
+      'error'
+    );
+  });
+}
 
 
   function detenerScanner(mostrar) {
+  return new Promise(function(resolve) {
     if (!html5QrCode || !scannerActivo) {
+      scannerActivo = false;
+      html5QrCode = null;
+
       if (mostrar !== false) {
         mostrarMensaje('La cámara no está activa.', '');
       }
+
+      resolve();
       return;
     }
 
     html5QrCode.stop().then(function() {
       scannerActivo = false;
+
+      try {
+        html5QrCode.clear();
+      } catch (e) {}
+
+      html5QrCode = null;
       document.getElementById('reader').innerHTML = '';
 
       if (mostrar !== false) {
         mostrarMensaje('Cámara detenida.', '');
       }
+
+      resolve();
     }).catch(function(err) {
       scannerActivo = false;
+      html5QrCode = null;
+      document.getElementById('reader').innerHTML = '';
+      resolve();
     });
-  }
-
+  });
+}
 
   /****************************************************
    * BÚSQUEDA
@@ -575,7 +595,7 @@
       if (document.getElementById('escaneoContinuo').checked) {
         setTimeout(function() {
           iniciarScanner();
-        }, 700);
+        }, 1200);
       }
     }).catch(function(err) {
       mostrarMensaje(err.message, 'error');
@@ -607,7 +627,7 @@
       if (document.getElementById('escaneoContinuo').checked) {
         setTimeout(function() {
           iniciarScanner();
-        }, 700);
+        }, 1200);
       }
     }).catch(function(err) {
       mostrarMensaje(err.message, 'error');
@@ -638,7 +658,7 @@
       if (document.getElementById('escaneoContinuo').checked) {
         setTimeout(function() {
           iniciarScanner();
-        }, 700);
+        }, 1200);
       }
     }).catch(function(err) {
       mostrarMensaje(err.message, 'error');
