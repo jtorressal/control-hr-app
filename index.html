@@ -360,16 +360,25 @@
 
 
   function cargarSelect(id, lista) {
-    const sel = document.getElementById(id);
-    sel.innerHTML = '';
+  const sel = document.getElementById(id);
+  sel.innerHTML = '';
 
-    lista.forEach(function(valor) {
-      const opt = document.createElement('option');
-      opt.value = valor;
-      opt.textContent = valor;
-      sel.appendChild(opt);
-    });
-  }
+  const vistos = new Set();
+
+  lista.forEach(function(valor) {
+    const texto = String(valor || '').trim();
+
+    if (!texto) return;
+    if (vistos.has(texto)) return;
+
+    vistos.add(texto);
+
+    const opt = document.createElement('option');
+    opt.value = texto;
+    opt.textContent = texto;
+    sel.appendChild(opt);
+  });
+}
 
 
   /****************************************************
@@ -534,16 +543,16 @@
     document.getElementById('cliente').textContent = res.cliente;
     document.getElementById('direccion').textContent = res.direccion;
     document.getElementById('choferPlanificado').textContent = res.choferPlanificado;
-    document.getElementById('vueltaPlanificada').textContent = res.vueltaPlanificada;
+    document.getElementById('vueltaPlanificada').textContent = normalizarVueltaPantalla(res.vueltaPlanificada);
     document.getElementById('estadoActual').textContent = res.estadoActual;
     document.getElementById('choferSalida').textContent = res.choferSalida;
-    document.getElementById('vueltaSalida').textContent = res.vueltaSalida;
+    document.getElementById('vueltaSalida').textContent = normalizarVueltaPantalla(res.vueltaSalida);
     document.getElementById('horaSalida').textContent = res.horaSalida;
     document.getElementById('horaRetorno').textContent = res.horaRetorno;
     document.getElementById('estadoRetorno').textContent = res.estadoRetorno;
 
     seleccionarValor('choferReal', res.choferSalida || res.choferPlanificado);
-    seleccionarValor('vueltaReal', res.vueltaSalida || res.vueltaPlanificada);
+    seleccionarValor('vueltaReal', normalizarVueltaPantalla(res.vueltaSalida || res.vueltaPlanificada));
 
     generarAlertas(res);
 
@@ -555,28 +564,63 @@
   }
 
 
-  function seleccionarValor(id, valor) {
-    if (!valor) return;
+  function normalizarVueltaPantalla(valor) {
+  if (valor === null || valor === undefined) return '';
 
-    const sel = document.getElementById(id);
-    let existe = false;
+  const texto = String(valor).trim();
 
-    for (let i = 0; i < sel.options.length; i++) {
-      if (sel.options[i].value === valor) {
-        existe = true;
-        break;
-      }
-    }
+  // Caso ISO raro que viene de Google Sheets cuando interpretó 1-2 como fecha.
+  const matchIso = texto.match(/^(\d{4})-(\d{2})-(\d{2})T/);
 
-    if (!existe) {
-      const opt = document.createElement('option');
-      opt.value = valor;
-      opt.textContent = valor;
-      sel.appendChild(opt);
-    }
-
-    sel.value = valor;
+  if (matchIso) {
+    const mes = String(Number(matchIso[2]));
+    const dia = String(Number(matchIso[3]));
+    return dia + '-' + mes;
   }
+
+  return texto;
+}
+
+
+  function seleccionarValor(id, valor) {
+  if (valor === null || valor === undefined || valor === '') return;
+
+  let texto = String(valor).trim();
+
+  if (id === 'vueltaReal') {
+    texto = normalizarVueltaPantalla(texto);
+
+    const vueltasPermitidas = ['1', '2', '3', '1-2'];
+
+    if (!vueltasPermitidas.includes(texto)) {
+      texto = '1';
+    }
+  }
+
+  const sel = document.getElementById(id);
+  let existe = false;
+
+  for (let i = 0; i < sel.options.length; i++) {
+    if (sel.options[i].value === texto) {
+      existe = true;
+      break;
+    }
+  }
+
+  // Para chofer sí permitimos agregar si no existe.
+  // Para vuelta NO agregamos valores raros ni duplicados.
+  if (!existe && id !== 'vueltaReal') {
+    const opt = document.createElement('option');
+    opt.value = texto;
+    opt.textContent = texto;
+    sel.appendChild(opt);
+    existe = true;
+  }
+
+  if (existe) {
+    sel.value = texto;
+  }
+}
 
 
   function generarAlertas(res) {
