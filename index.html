@@ -403,6 +403,12 @@
 
   function iniciarScanner() {
   mostrarMensaje('Iniciando cámara...', '');
+  
+  document.getElementById('busquedaManual').blur();
+
+  if (document.activeElement) {
+  document.activeElement.blur();
+  }  
 
   const reader = document.getElementById('reader');
   reader.innerHTML = '';
@@ -490,6 +496,8 @@
 
   function buscarManual() {
     const codigo = document.getElementById('busquedaManual').value.trim();
+    
+    document.getElementById('busquedaManual').blur();
 
     if (!codigo) {
       mostrarMensaje('Escribí una HR o TokenQR.', 'error');
@@ -698,21 +706,21 @@
    * LIMPIEZA
    ****************************************************/
 
-  function limpiar() {
-    codigoActual = null;
-    hrActual = null;
+function limpiar() {
+  codigoActual = null;
+  hrActual = null;
 
-    document.getElementById('cardDatos').classList.add('hidden');
-    document.getElementById('busquedaManual').value = '';
-    document.getElementById('observacionSalida').value = '';
-    document.getElementById('observacionRetorno').value = '';
-    document.getElementById('observacionIncidencia').value = '';
-    document.getElementById('alertas').innerHTML = '';
+  document.getElementById('cardDatos').classList.add('hidden');
 
-    setTimeout(function() {
-      document.getElementById('busquedaManual').focus();
-    }, 100);
-  }
+  const inputManual = document.getElementById('busquedaManual');
+  inputManual.value = '';
+  inputManual.blur();
+
+  document.getElementById('observacionSalida').value = '';
+  document.getElementById('observacionRetorno').value = '';
+  document.getElementById('observacionIncidencia').value = '';
+  document.getElementById('alertas').innerHTML = '';
+}
 
 
   function mostrarMensaje(texto, tipo) {
