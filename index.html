@@ -139,11 +139,7 @@
       <option value="RETORNO">RETORNO PAPEL</option>
       <option value="INCIDENCIA">INCIDENCIA</option>
     </select>
-
-    <label>
-      <input type="checkbox" id="escaneoContinuo" checked style="width:auto;">
-      Escaneo continuo después de confirmar
-    </label>
+    
 
     <button class="btn-primary" onclick="iniciarScanner()">Escanear QR</button>
     <button class="btn-gray" onclick="detenerScanner()">Detener cámara</button>
@@ -672,11 +668,6 @@
       mostrarMensaje(res.mensaje, 'ok');
       limpiar();
 
-      if (document.getElementById('escaneoContinuo').checked) {
-        setTimeout(function() {
-          iniciarScanner();
-        }, 1200);
-      }
     }).catch(function(err) {
       mostrarMensaje(err.message, 'error');
     });
@@ -704,11 +695,6 @@
       mostrarMensaje(res.mensaje, 'ok');
       limpiar();
 
-      if (document.getElementById('escaneoContinuo').checked) {
-        setTimeout(function() {
-          iniciarScanner();
-        }, 1200);
-      }
     }).catch(function(err) {
       mostrarMensaje(err.message, 'error');
     });
@@ -735,11 +721,6 @@
       mostrarMensaje(res.mensaje, 'ok');
       limpiar();
 
-      if (document.getElementById('escaneoContinuo').checked) {
-        setTimeout(function() {
-          iniciarScanner();
-        }, 1200);
-      }
     }).catch(function(err) {
       mostrarMensaje(err.message, 'error');
     });
