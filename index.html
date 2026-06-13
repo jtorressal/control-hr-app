@@ -193,7 +193,7 @@
       <label>Observación salida</label>
       <textarea id="observacionSalida" rows="3" placeholder="Opcional"></textarea>
 
-      <button class="btn-ok" onclick="confirmarSalida()">Confirmar salida</button>
+      <button id="btnConfirmarSalida" class="btn-ok" onclick="confirmarSalida()">Confirmar salida</button>
     </div>
 
     <div id="panelRetorno" class="hidden">
@@ -663,31 +663,46 @@
    ****************************************************/
 
   function confirmarSalida() {
-    if (!codigoActual) {
-      mostrarMensaje('Primero escaneá o buscá una HR.', 'error');
+  if (!codigoActual) {
+    mostrarMensaje('Primero escaneá o buscá una HR.', 'error');
+    return;
+  }
+
+  const estadoActual = String(document.getElementById('estadoActual').textContent || '').trim().toUpperCase();
+
+  const estadosPermitidosSalida = [
+    'PLANIFICADA',
+    'SALIDA_CANCELADA'
+  ];
+
+  if (!estadosPermitidosSalida.includes(estadoActual)) {
+    mostrarMensaje(
+      'No se puede registrar salida. La HR debe estar PLANIFICADA o SALIDA_CANCELADA. Estado actual: ' + estadoActual,
+      'error'
+    );
+    return;
+  }
+
+  mostrarMensaje('Registrando salida...', '');
+
+  apiCall('registrarSalida', {
+    codigo: codigoActual,
+    chofer: document.getElementById('choferReal').value,
+    vuelta: document.getElementById('vueltaReal').value,
+    observacion: document.getElementById('observacionSalida').value
+  }).then(function(res) {
+    if (!res.ok) {
+      mostrarMensaje(res.mensaje || 'No se pudo registrar salida.', 'error');
       return;
     }
 
-    mostrarMensaje('Registrando salida...', '');
+    mostrarMensaje(res.mensaje, 'ok');
+    limpiar();
 
-    apiCall('registrarSalida', {
-      codigo: codigoActual,
-      chofer: document.getElementById('choferReal').value,
-      vuelta: document.getElementById('vueltaReal').value,
-      observacion: document.getElementById('observacionSalida').value
-    }).then(function(res) {
-      if (!res.ok) {
-        mostrarMensaje(res.mensaje || 'No se pudo registrar salida.', 'error');
-        return;
-      }
-
-      mostrarMensaje(res.mensaje, 'ok');
-      limpiar();
-
-    }).catch(function(err) {
-      mostrarMensaje(err.message, 'error');
-    });
-  }
+  }).catch(function(err) {
+    mostrarMensaje(err.message, 'error');
+  });
+}
 
 
   function confirmarCancelarSalida() {
