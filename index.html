@@ -137,6 +137,7 @@
     <select id="modo" onchange="actualizarModo()">
       <option value="SALIDA">SALIDA</option>
       <option value="RETORNO">RETORNO PAPEL</option>
+      <option value="CANCELAR_SALIDA">CANCELAR SALIDA</option>
       <option value="INCIDENCIA">INCIDENCIA</option>
     </select>
     
@@ -204,6 +205,14 @@
       <textarea id="observacionRetorno" rows="3" placeholder="Opcional"></textarea>
 
       <button class="btn-ok" onclick="confirmarRetorno()">Confirmar retorno</button>
+    </div>
+
+    <div id="panelCancelarSalida" class="hidden">
+      <hr>
+      <label>Motivo de cancelación de salida</label>
+      <textarea id="observacionCancelarSalida" rows="3" placeholder="Ejemplo: sin stock, material roto, no entra en el camión, se reprograma"></textarea>
+
+      <button class="btn-danger" onclick="confirmarCancelarSalida()">Cancelar salida</button>
     </div>
 
     <div id="panelIncidencia" class="hidden">
@@ -386,21 +395,24 @@
 
     document.getElementById('panelSalida').classList.add('hidden');
     document.getElementById('panelRetorno').classList.add('hidden');
+    document.getElementById('panelCancelarSalida').classList.add('hidden');
     document.getElementById('panelIncidencia').classList.add('hidden');
 
     if (modo === 'SALIDA') {
       document.getElementById('panelSalida').classList.remove('hidden');
     }
-
     if (modo === 'RETORNO') {
       document.getElementById('panelRetorno').classList.remove('hidden');
     }
 
+    if (modo === 'CANCELAR_SALIDA') {
+      document.getElementById('panelCancelarSalida').classList.remove('hidden');
+    }
+    
     if (modo === 'INCIDENCIA') {
       document.getElementById('panelIncidencia').classList.remove('hidden');
     }
   }
-
 
   /****************************************************
    * ESCÁNER QR
@@ -630,6 +642,10 @@
       html += '<div class="alerta">Atención: esta HR ya figura RETORNADA.</div>';
     }
 
+    if (String(res.estadoActual).toUpperCase() === 'SALIDA_CANCELADA') {
+      html += '<div class="alerta">Atención: esta HR tiene la salida cancelada. Puede volver a salir si corresponde.</div>';
+    }
+
     if (res.choferSalida && res.choferPlanificado && res.choferSalida !== res.choferPlanificado) {
       html += '<div class="alerta">Chofer real distinto al planificado.</div>';
     }
@@ -673,6 +689,44 @@
     });
   }
 
+
+  function confirmarCancelarSalida() {
+    if (!codigoActual) {
+      mostrarMensaje('Primero escaneá o buscá una HR.', 'error');
+      return;
+    }
+    
+    const observacion = document.getElementById('observacionCancelarSalida').value.trim();
+
+    if (!observacion) {
+      mostrarMensaje('Escribí el motivo de cancelación de salida.', 'error');
+      return;
+    }
+
+    const confirma = confirm('¿Confirmás cancelar la salida de esta HR?');
+
+    if (!confirma) {
+      return;
+    }
+
+    mostrarMensaje('Cancelando salida...', '');
+
+    apiCall('registrarCancelarSalida', {
+      codigo: codigoActual,
+      observacion: observacion
+    }).then(function(res) {
+      if (!res.ok) {
+        mostrarMensaje(res.mensaje || 'No se pudo cancelar la salida.', 'error');
+        return;
+      }
+
+      mostrarMensaje(res.mensaje, 'ok');
+      limpiar();
+
+    }).catch(function(err) {
+      mostrarMensaje(err.message, 'error');
+    });
+  }
 
   function confirmarRetorno() {
     if (!codigoActual) {
@@ -743,6 +797,7 @@ function limpiar() {
 
   document.getElementById('observacionSalida').value = '';
   document.getElementById('observacionRetorno').value = '';
+  document.getElementById('observacionCancelarSalida').value = '';
   document.getElementById('observacionIncidencia').value = '';
   document.getElementById('alertas').innerHTML = '';
 }
