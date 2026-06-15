@@ -306,7 +306,7 @@
         }
       } catch (e) {}
 
-      reject(new Error('No respondió Apps Script. Revisá que API_URL termine en /exec y que la implementación esté publicada para cualquier persona.'));
+      reject(new Error('Apps Script tardo demasiado en responder. Revisá la planilla antes de volver a confirmar, porque la acción puede haberse registrado.'));
     }, 45000);
 
     window[callbackName] = function(data) {
