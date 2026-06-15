@@ -307,7 +307,7 @@
       } catch (e) {}
 
       reject(new Error('No respondió Apps Script. Revisá que API_URL termine en /exec y que la implementación esté publicada para cualquier persona.'));
-    }, 15000);
+    }, 45000);
 
     window[callbackName] = function(data) {
       if (terminado) return;
