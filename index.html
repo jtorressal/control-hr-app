@@ -191,6 +191,28 @@
       <button id="btnConfirmarSalida" class="btn-ok" onclick="confirmarSalida()">Confirmar salida</button>
     </div>
 
+    <div id="panelSalidaRapida" class="hidden">
+      <hr>
+
+      <div class="alerta">
+        QR libre detectado. Cargá los datos y registrá la salida rápida.
+      </div>
+
+      <label>HR</label>
+      <input id="hrRapida" placeholder="Número de hoja de ruta">
+
+      <label>Chofer</label>
+      <select id="choferRapido"></select>
+
+      <label>Vuelta</label>
+      <select id="vueltaRapida"></select>
+
+      <label>Observación salida rápida</label>
+      <textarea id="observacionSalidaRapida" rows="3" placeholder="Opcional"></textarea>
+
+      <button class="btn-ok" onclick="confirmarSalidaRapida()">Confirmar salida rápida</button>
+   </div>
+
     <div id="panelRetorno" class="hidden">
       <hr>
       <label>Estado del retorno</label>
@@ -348,7 +370,11 @@
         }
 
         cargarSelect('choferReal', res.choferes || []);
+        cargarSelect('choferRapido', res.choferes || []);
+        
         cargarSelect('vueltaReal', res.vueltas || []);
+        cargarSelect('vueltaRapida', res.vueltas || []);
+        
         cargarSelect('estadoRetornoInput', res.estadosRetorno || []);
 
         mostrarMensaje('App lista para usar.', 'ok');
@@ -385,30 +411,37 @@
    * MODO
    ****************************************************/
 
-  function actualizarModo() {
-    const modo = document.getElementById('modo').value;
+function actualizarModo() {
+  const modo = document.getElementById('modo').value;
+  const estadoActual = String(document.getElementById('estadoActual').textContent || '').trim().toUpperCase();
 
-    document.getElementById('panelSalida').classList.add('hidden');
-    document.getElementById('panelRetorno').classList.add('hidden');
-    document.getElementById('panelCancelarSalida').classList.add('hidden');
-    document.getElementById('panelIncidencia').classList.add('hidden');
+  document.getElementById('panelSalida').classList.add('hidden');
+  document.getElementById('panelSalidaRapida').classList.add('hidden');
+  document.getElementById('panelRetorno').classList.add('hidden');
+  document.getElementById('panelCancelarSalida').classList.add('hidden');
+  document.getElementById('panelIncidencia').classList.add('hidden');
 
-    if (modo === 'SALIDA') {
+  if (modo === 'SALIDA') {
+    if (estadoActual === 'QR_LIBRE') {
+      document.getElementById('panelSalidaRapida').classList.remove('hidden');
+    } else {
       document.getElementById('panelSalida').classList.remove('hidden');
-    }
-    if (modo === 'RETORNO') {
-      document.getElementById('panelRetorno').classList.remove('hidden');
-    }
-
-    if (modo === 'CANCELAR_SALIDA') {
-      document.getElementById('panelCancelarSalida').classList.remove('hidden');
-    }
-    
-    if (modo === 'INCIDENCIA') {
-      document.getElementById('panelIncidencia').classList.remove('hidden');
     }
   }
 
+  if (modo === 'RETORNO') {
+    document.getElementById('panelRetorno').classList.remove('hidden');
+  }
+
+  if (modo === 'CANCELAR_SALIDA') {
+    document.getElementById('panelCancelarSalida').classList.remove('hidden');
+  }
+  
+  if (modo === 'INCIDENCIA') {
+    document.getElementById('panelIncidencia').classList.remove('hidden');
+  }
+}
+  
   /****************************************************
    * ESCÁNER QR
    ****************************************************/
@@ -627,6 +660,10 @@
   function generarAlertas(res) {
     let html = '';
 
+    if (String(res.estadoActual).toUpperCase() === 'QR_LIBRE') {
+      html += '<div class="alerta">QR libre disponible para salida rápida.</div>';
+    }
+
     if (String(res.estadoActual).toUpperCase() === 'EN CALLE') {
       html += '<div class="alerta">Atención: esta HR ya figura EN CALLE.</div>';
     }
@@ -686,6 +723,70 @@
   }).then(function(res) {
     if (!res.ok) {
       mostrarMensaje(res.mensaje || 'No se pudo registrar salida.', 'error');
+      return;
+    }
+
+    mostrarMensaje(res.mensaje, 'ok');
+    limpiar();
+
+  }).catch(function(err) {
+    mostrarMensaje(err.message, 'error');
+  });
+}
+
+  function confirmarSalidaRapida() {
+  if (!codigoActual) {
+    mostrarMensaje('Primero escaneá o buscá un QR libre.', 'error');
+    return;
+  }
+
+  const estadoActual = String(document.getElementById('estadoActual').textContent || '').trim().toUpperCase();
+
+  if (estadoActual !== 'QR_LIBRE') {
+    mostrarMensaje(
+      'La salida rápida solo se puede usar con QR_LIBRE. Estado actual: ' + estadoActual,
+      'error'
+    );
+    return;
+  }
+
+  const hr = document.getElementById('hrRapida').value.trim();
+  const chofer = document.getElementById('choferRapido').value;
+  const vuelta = document.getElementById('vueltaRapida').value;
+  const observacion = document.getElementById('observacionSalidaRapida').value;
+
+  if (!hr) {
+    mostrarMensaje('Cargá el número de HR.', 'error');
+    return;
+  }
+
+  if (!chofer) {
+    mostrarMensaje('Seleccioná un chofer.', 'error');
+    return;
+  }
+
+  if (!vuelta) {
+    mostrarMensaje('Seleccioná una vuelta.', 'error');
+    return;
+  }
+
+  const confirma = confirm('¿Confirmás registrar salida rápida para la HR ' + hr + '?');
+
+  if (!confirma) {
+    return;
+  }
+
+  mostrarMensaje('Registrando salida rápida...', '');
+
+  apiCall('registrarSalidaRapida', {
+    codigo: codigoActual,
+    hr: hr,
+    chofer: chofer,
+    vuelta: vuelta,
+    observacion: observacion
+  }).then(function(res) {
+    if (!res.ok) {
+      mostrarMensaje(res.mensaje || 'No se pudo registrar la salida rápida.', 'error');
       return;
     }
 
@@ -804,6 +905,8 @@ function limpiar() {
   inputManual.blur();
 
   document.getElementById('observacionSalida').value = '';
+  document.getElementById('hrRapida').value = '';
+  document.getElementById('observacionSalidaRapida').value = '';
   document.getElementById('observacionRetorno').value = '';
   document.getElementById('observacionCancelarSalida').value = '';
   document.getElementById('observacionIncidencia').value = '';
