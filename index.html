@@ -163,11 +163,6 @@
   <div class="card hidden" id="cardDatos">
     <div class="titulo-hr">HR: <span id="hr"></span></div>
 
-    <div class="dato"><b>Cliente:</b> <span id="cliente"></span></div>
-    <div class="dato"><b>Dirección:</b> <span id="direccion"></span></div>
-
-    <hr>
-
     <div class="dato"><b>Chofer planificado:</b> <span id="choferPlanificado"></span></div>
     <div class="dato"><b>Vuelta planificada:</b> <span id="vueltaPlanificada"></span></div>
 
@@ -548,8 +543,6 @@
     hrActual = res.hr;
 
     document.getElementById('hr').textContent = res.hr;
-    document.getElementById('cliente').textContent = res.cliente;
-    document.getElementById('direccion').textContent = res.direccion;
     document.getElementById('choferPlanificado').textContent = res.choferPlanificado;
     document.getElementById('vueltaPlanificada').textContent = normalizarVueltaPantalla(res.vueltaPlanificada);
     document.getElementById('estadoActual').textContent = res.estadoActual;
