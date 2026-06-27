@@ -1,1971 +1,878 @@
-/****************************************************
- * CONTROL DE HOJAS DE RUTA CON QR SIMPLE
- * Google Sheets + Apps Script
- ****************************************************/
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Control QR Tráfico</title>
 
-const HOJA_HR = 'Hojas_Ruta';
-const HOJA_CHOFERES = 'Choferes';
-const HOJA_MOV = 'Movimientos_HR';
-const HOJA_CONTROL = 'Control_Diario';
-const HOJA_HIST_CONTROL = 'Historial_Control_HR';
-const HOJA_CONTROL_CHOFERES = 'Control_Choferes_Dia';
-const API_KEY = 'CONTROLHR2026';
-const HOJA_ETIQUETAS = 'Etiquetas_QR';
-const ACTUALIZAR_TABLEROS_AUTOMATICAMENTE = false;
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
 
-const ESTADO_PENDIENTE_SALIDA = 'PENDIENTE_SALIDA';
-
-const VUELTAS_VALIDAS = ['1', '2', '3', '1-2'];
-const ESTADOS_RETORNO_VALIDOS = ['COMPLETO', 'PARCIAL'];
-
-const HEADERS_HR = [
-  'Fecha',
-  'HR',
-  'TokenQR',
-  'ChoferPlanificado',
-  'VueltaPlanificada',
-  'EstadoActual',
-  'ChoferSalida',
-  'VueltaSalida',
-  'HoraSalida',
-  'HoraRetorno',
-  'EstadoRetorno',
-  'ObservacionSalida',
-  'ObservacionRetorno',
-  'UltimaActualizacion'
-];
-
-const HEADERS_CHOFERES = [
-  'Chofer',
-  'Activo'
-];
-
-const HEADERS_MOV = [
-  'Timestamp',
-  'Accion',
-  'HR',
-  'TokenQR',
-  'Chofer',
-  'Vuelta',
-  'EstadoRetorno',
-  'Usuario',
-  'Observacion'
-];
-
-const HEADERS_HIST_CONTROL = [
-  'Fecha',
-  'HR del día',
-  'Pendientes de salida',
-  'Salida cancelada',
-  'En calle',
-  'Retornadas',
-  'Retorno completo',
-  'Retorno parcial',
-  'Incidencias',
-  'Cambio de chofer',
-  'Cambio de vuelta',
-  'Pendientes de retorno',
-  'UltimaActualizacion',
-  'Periodo'
-];
-
-const HEADERS_CONTROL_CHOFERES_BASE = [
-  'Fecha',
-  'Chofer',
-  'Vuelta',
-  'Cantidad HR'
-];
-
-
-
-function normalizarEstadoOperativo_(estado) {
-  const e = String(estado || '').trim().toUpperCase();
-
-  if (e === '') return ESTADO_PENDIENTE_SALIDA;
-
-  return e;
-}
-
-function estadoEsPendienteSalida_(estado) {
-  return normalizarEstadoOperativo_(estado) === ESTADO_PENDIENTE_SALIDA;
-}
-
-function estadoPermiteSalida_(estado) {
-  const e = normalizarEstadoOperativo_(estado);
-  return e === ESTADO_PENDIENTE_SALIDA || e === 'SALIDA_CANCELADA';
-}
-
-function crearIndicadoresVacios_() {
-  return {
-    total: 0,
-    pendientesSalida: 0,
-    salidaCancelada: 0,
-    enCalle: 0,
-    retornadas: 0,
-    completo: 0,
-    parcial: 0,
-    incidencias: 0,
-    cambioChofer: 0,
-    cambioVuelta: 0,
-    pendientesRetorno: 0
-  };
-}
-
-/****************************************************
- * MENÚ
- ****************************************************/
-
-function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu('Control HR')
-    .addItem('1. Crear / revisar estructura', 'crearEstructura')
-    .addItem('2. Generar lote de QR pendientes de salida', 'generarLoteQrPendientesSalida')
-    .addSeparator()
-    .addItem('3. Actualizar tableros', 'actualizarTablerosOperativos')
-    .addItem('4. Aplicar formatos visuales', 'aplicarFormatosVisuales')
-    .addToUi();
-}
-
-
-/****************************************************
- * WEB APP
- ****************************************************/
-
-function doGet(e) {
-  if (e && e.parameter && e.parameter.api === '1') {
-    return apiRouter_(e);
-  }
-
-  const template = HtmlService.createTemplateFromFile('Index');
-
-  template.codigoInicial = '';
-  template.modoInicial = 'SALIDA';
-
-  if (e && e.parameter) {
-    template.codigoInicial = e.parameter.codigo || '';
-    template.modoInicial = e.parameter.modo || 'SALIDA';
-  }
-
-  return template
-    .evaluate()
-    .setTitle('Control QR Tráfico')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-}
-
-
-/****************************************************
- * ESTRUCTURA
- ****************************************************/
-
-function crearEstructura() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  asegurarHojaConHeaders_(ss, HOJA_HR, HEADERS_HR);
-  asegurarHojaConHeaders_(ss, HOJA_CHOFERES, HEADERS_CHOFERES);
-  asegurarHojaConHeaders_(ss, HOJA_MOV, HEADERS_MOV);
-  asegurarHojaConHeaders_(ss, HOJA_HIST_CONTROL, HEADERS_HIST_CONTROL);
-
-  asegurarHojaControlDiarioSinLimpiar_();
-  asegurarHojaControlChoferesDiaSinLimpiar_();
-
-  aplicarFormatosVisuales(false);
-
-  SpreadsheetApp.getUi().alert(
-    'Estructura creada/revisada correctamente.\n\n' +
-    'También se aplicaron los formatos visuales.\n\n' +
-    'No se borraron ni recalcularon los tableros. Para actualizarlos usá las opciones de actualización del menú.'
-  );
-}
-
-function asegurarHojaControlDiarioSinLimpiar_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sh = ss.getSheetByName(HOJA_CONTROL);
-
-  if (!sh) {
-    sh = ss.insertSheet(HOJA_CONTROL);
-    sh.getRange('A1').setValue('Fecha control');
-    sh.getRange('B1').setValue(new Date());
-
-    const valoresControl = armarValoresControl_(crearIndicadoresVacios_());
-
-    sh.getRange(3, 1, valoresControl.length, 2).setValues(valoresControl);
-  }
-}
-
-
-function asegurarHojaControlChoferesDiaSinLimpiar_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sh = ss.getSheetByName(HOJA_CONTROL_CHOFERES);
-
-  if (!sh) {
-    sh = ss.insertSheet(HOJA_CONTROL_CHOFERES);
-    sh.getRange(1, 1, 1, HEADERS_CONTROL_CHOFERES_BASE.length)
-      .setValues([HEADERS_CONTROL_CHOFERES_BASE]);
-    return;
-  }
-
-  if (sh.getLastRow() === 0 || sh.getLastColumn() === 0) {
-    sh.getRange(1, 1, 1, HEADERS_CONTROL_CHOFERES_BASE.length)
-      .setValues([HEADERS_CONTROL_CHOFERES_BASE]);
-    return;
-  }
-
-  const primeraFila = sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), HEADERS_CONTROL_CHOFERES_BASE.length))
-    .getValues()[0]
-    .map(function(h) {
-      return String(h || '').trim();
-    });
-
-  const estaVacia = primeraFila.every(function(h) {
-    return h === '';
-  });
-
-  if (estaVacia) {
-    sh.getRange(1, 1, 1, HEADERS_CONTROL_CHOFERES_BASE.length)
-      .setValues([HEADERS_CONTROL_CHOFERES_BASE]);
-  }
-}
-
-function asegurarHojaConHeaders_(ss, nombreHoja, headersNecesarios) {
-  let sh = ss.getSheetByName(nombreHoja);
-
-  if (!sh) {
-    sh = ss.insertSheet(nombreHoja);
-  }
-
-  const lastCol = Math.max(sh.getLastColumn(), 1);
-  let headersActuales = sh.getRange(1, 1, 1, lastCol).getValues()[0]
-    .map(h => String(h || '').trim());
-
-  // Compatibilidad con el nombre anterior del indicador.
-  // Evita que se agregue una columna extra si la hoja ya existía.
-  if (nombreHoja === HOJA_HIST_CONTROL) {
-    const idxViejo = headersActuales.indexOf('Planificadas sin salir');
-    const idxNuevo = headersActuales.indexOf('Pendientes de salida');
-
-    if (idxViejo >= 0 && idxNuevo < 0) {
-      sh.getRange(1, idxViejo + 1).setValue('Pendientes de salida');
-      headersActuales[idxViejo] = 'Pendientes de salida';
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 12px;
+      background: #f4f4f4;
     }
-  }
 
-  const estaVacia = headersActuales.every(h => h === '');
+    h2 {
+      margin-top: 0;
+      text-align: center;
+    }
 
-  if (estaVacia) {
-    sh.getRange(1, 1, 1, headersNecesarios.length).setValues([headersNecesarios]);
-  } else {
-    headersNecesarios.forEach(header => {
-      if (!headersActuales.includes(header)) {
-        const nuevaCol = sh.getLastColumn() + 1;
-        sh.getRange(1, nuevaCol).setValue(header);
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 5px rgba(0,0,0,0.18);
+    }
+
+    label {
+      display: block;
+      font-weight: bold;
+      margin-top: 10px;
+    }
+
+    select,
+    input,
+    textarea,
+    button {
+      width: 100%;
+      box-sizing: border-box;
+      font-size: 17px;
+      padding: 12px;
+      margin-top: 5px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+    }
+
+    button {
+      border: none;
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 12px;
+    }
+
+    .btn-primary {
+      background: #1a73e8;
+      color: white;
+    }
+
+    .btn-ok {
+      background: #188038;
+      color: white;
+    }
+
+    .btn-warn {
+      background: #f9ab00;
+      color: black;
+    }
+
+    .btn-danger {
+      background: #d93025;
+      color: white;
+    }
+
+    .btn-gray {
+      background: #5f6368;
+      color: white;
+    }
+
+    .dato {
+      margin: 6px 0;
+      font-size: 16px;
+    }
+
+    .titulo-hr {
+      font-size: 24px;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .ok {
+      color: #188038;
+      font-weight: bold;
+    }
+
+    .error {
+      color: #d93025;
+      font-weight: bold;
+    }
+
+    .alerta {
+      color: #f57c00;
+      font-weight: bold;
+      margin-top: 6px;
+    }
+
+    #reader {
+      width: 100%;
+      background: white;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid #ddd;
+      margin: 12px 0;
+    }
+
+    .small {
+      font-size: 13px;
+      color: #555;
+      margin-top: 6px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h2>Control QR Tráfico</h2>
+
+  <div class="card">
+    <label>Modo</label>
+    <select id="modo" onchange="actualizarModo()">
+      <option value="SALIDA">SALIDA</option>
+      <option value="RETORNO">RETORNO PAPEL</option>
+      <option value="CANCELAR_SALIDA">CANCELAR SALIDA</option>
+      <option value="INCIDENCIA">INCIDENCIA</option>
+    </select>
+
+    <button class="btn-primary" onclick="iniciarScanner()">Escanear QR</button>
+    <button class="btn-gray" onclick="detenerScanner()">Detener cámara</button>
+
+    <div class="small">
+      El QR debe contener solo el TokenQR. Si falla el escaneo, podés buscar manualmente por HR o TokenQR.
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="reader"></div>
+  </div>
+
+  <div class="card">
+    <label>Buscar manualmente</label>
+    <input id="busquedaManual" placeholder="Escribir HR o TokenQR">
+    <button class="btn-primary" onclick="buscarManual()">Buscar</button>
+  </div>
+
+  <div class="card hidden" id="cardDatos">
+    <div class="titulo-hr">HR: <span id="hr"></span></div>
+
+    <div class="dato"><b>Chofer planificado:</b> <span id="choferPlanificado"></span></div>
+    <div class="dato"><b>Vuelta planificada:</b> <span id="vueltaPlanificada"></span></div>
+
+    <hr>
+
+    <div class="dato"><b>Estado actual:</b> <span id="estadoActual"></span></div>
+    <div class="dato"><b>Chofer salida:</b> <span id="choferSalida"></span></div>
+    <div class="dato"><b>Vuelta salida:</b> <span id="vueltaSalida"></span></div>
+    <div class="dato"><b>Hora salida:</b> <span id="horaSalida"></span></div>
+    <div class="dato"><b>Hora retorno:</b> <span id="horaRetorno"></span></div>
+    <div class="dato"><b>Estado retorno:</b> <span id="estadoRetorno"></span></div>
+
+    <div id="alertas"></div>
+
+    <div id="panelSalida">
+      <hr>
+
+      <label>HR</label>
+      <input id="hrSalida" placeholder="Número de hoja de ruta">
+
+      <label>Chofer real de salida</label>
+      <select id="choferReal"></select>
+
+      <label>Vuelta real</label>
+      <select id="vueltaReal"></select>
+
+      <label>Observación salida</label>
+      <textarea id="observacionSalida" rows="3" placeholder="Opcional"></textarea>
+
+      <button id="btnConfirmarSalida" class="btn-ok" onclick="confirmarSalida()">Confirmar salida</button>
+    </div>
+
+    <div id="panelRetorno" class="hidden">
+      <hr>
+      <label>Estado del retorno</label>
+      <select id="estadoRetornoInput"></select>
+
+      <label>Observación retorno</label>
+      <textarea id="observacionRetorno" rows="3" placeholder="Opcional"></textarea>
+
+      <button class="btn-ok" onclick="confirmarRetorno()">Confirmar retorno</button>
+    </div>
+
+    <div id="panelCancelarSalida" class="hidden">
+      <hr>
+      <label>Motivo de cancelación de salida</label>
+      <textarea id="observacionCancelarSalida" rows="3" placeholder="Ejemplo: sin stock, material roto, no entra en el camión, se reprograma"></textarea>
+
+      <button class="btn-danger" onclick="confirmarCancelarSalida()">Cancelar salida</button>
+    </div>
+
+    <div id="panelIncidencia" class="hidden">
+      <hr>
+      <label>Observación de incidencia</label>
+      <textarea id="observacionIncidencia" rows="3" placeholder="Ejemplo: no volvió el papel, lo trajo otro chofer, papel incompleto"></textarea>
+
+      <button class="btn-danger" onclick="confirmarIncidencia()">Registrar incidencia</button>
+    </div>
+
+    <button class="btn-warn" onclick="limpiar()">Escanear otra HR</button>
+  </div>
+
+  <div id="mensaje"></div>
+
+<script>
+  /****************************************************
+   * CONFIGURACIÓN
+   * Pegá acá tu URL de Apps Script y tu API_KEY
+   ****************************************************/
+
+  const API_URL = 'https://script.google.com/macros/s/AKfycbwKoiUSnTSQmZUYQ_8icYHS0f0gEI1Mdo8Y8d5k8m9EwOP899yjpS3aqFf8wjs32JnF/exec';
+  const API_KEY = 'CONTROLHR2026';
+
+
+  /****************************************************
+   * VARIABLES
+   ****************************************************/
+
+  let html5QrCode = null;
+  let scannerActivo = false;
+
+  let codigoActual = null;
+  let hrActual = null;
+
+
+  /****************************************************
+   * INICIO
+   ****************************************************/
+
+  window.onload = function() {
+    actualizarModo();
+    configurarEnterManual();
+    obtenerDatosIniciales();
+  };
+
+
+  function configurarEnterManual() {
+    const input = document.getElementById('busquedaManual');
+
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        buscarManual();
       }
     });
   }
 
-  sh.setFrozenRows(1);
-  sh.autoResizeColumns(1, sh.getLastColumn());
-}
 
-function aplicarFormatosVisuales(mostrarAlerta) {
-  if (mostrarAlerta === undefined) {
-    mostrarAlerta = true;
+  /****************************************************
+   * API JSONP
+   ****************************************************/
+
+  function apiCall(action, params = {}) {
+    return new Promise(function(resolve, reject) {
+      const callbackName = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
+      let terminado = false;
+
+      const query = new URLSearchParams();
+      query.set('api', '1');
+      query.set('key', API_KEY);
+      query.set('action', action);
+      query.set('callback', callbackName);
+      query.set('_', Date.now());
+
+      Object.keys(params).forEach(function(k) {
+        query.set(k, params[k] == null ? '' : String(params[k]));
+      });
+
+      const script = document.createElement('script');
+
+      const timer = setTimeout(function() {
+        if (terminado) return;
+
+        terminado = true;
+
+        try {
+          delete window[callbackName];
+          if (script && script.parentNode) {
+            script.parentNode.removeChild(script);
+          }
+        } catch (e) {}
+
+        reject(new Error('Apps Script tardó demasiado en responder. Revisá la planilla antes de volver a confirmar, porque la acción puede haberse registrado.'));
+      }, 45000);
+
+      window[callbackName] = function(data) {
+        if (terminado) return;
+
+        terminado = true;
+        clearTimeout(timer);
+
+        try {
+          delete window[callbackName];
+          if (script && script.parentNode) {
+            script.parentNode.removeChild(script);
+          }
+        } catch (e) {}
+
+        resolve(data);
+      };
+
+      script.async = true;
+      script.src = API_URL.trim() + '?' + query.toString();
+
+      script.onerror = function() {
+        console.warn('Advertencia: evento onerror del script JSONP.');
+      };
+
+      document.body.appendChild(script);
+    });
   }
 
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  aplicarFormatoHojasRuta_(ss.getSheetByName(HOJA_HR));
-  aplicarFormatoChoferes_(ss.getSheetByName(HOJA_CHOFERES));
-  aplicarFormatoMovimientos_(ss.getSheetByName(HOJA_MOV));
-  aplicarFormatoControlDiario_(ss.getSheetByName(HOJA_CONTROL));
-  aplicarFormatoHistorialControl_(ss.getSheetByName(HOJA_HIST_CONTROL));
-  aplicarFormatoControlChoferes_(ss.getSheetByName(HOJA_CONTROL_CHOFERES));
+  /****************************************************
+   * DATOS INICIALES
+   ****************************************************/
 
-  if (mostrarAlerta) {
-    SpreadsheetApp.getUi().alert('Formatos visuales aplicados correctamente.');
+  function obtenerDatosIniciales() {
+    mostrarMensaje('Conectando con la planilla...', '');
+
+    apiCall('datosIniciales')
+      .then(function(res) {
+        if (!res.ok) {
+          mostrarMensaje(res.mensaje || 'No se pudieron cargar los datos iniciales.', 'error');
+          return;
+        }
+
+        cargarSelect('choferReal', res.choferes || []);
+        cargarSelect('vueltaReal', res.vueltas || []);
+        cargarSelect('estadoRetornoInput', res.estadosRetorno || []);
+
+        mostrarMensaje('App lista para usar.', 'ok');
+      })
+      .catch(function(err) {
+        mostrarMensaje(err.message, 'error');
+      });
   }
-}
 
 
-function setAnchosColumnas_(sh, anchos) {
-  if (!sh) return;
+  function cargarSelect(id, lista) {
+    const sel = document.getElementById(id);
+    sel.innerHTML = '';
 
-  Object.keys(anchos).forEach(function(col) {
-    sh.setColumnWidth(Number(col), anchos[col]);
-  });
-}
+    const vistos = new Set();
 
+    lista.forEach(function(valor) {
+      const texto = String(valor || '').trim();
 
-function formatoEncabezado_(sh) {
-  if (!sh || sh.getLastColumn() < 1) return;
+      if (!texto) return;
+      if (vistos.has(texto)) return;
 
-  sh.setFrozenRows(1);
+      vistos.add(texto);
 
-  sh.getRange(1, 1, 1, sh.getLastColumn())
-    .setFontWeight('bold')
-    .setHorizontalAlignment('center')
-    .setVerticalAlignment('middle')
-    .setWrap(true);
-}
-
-
-function aplicarFormatoHojasRuta_(sh) {
-  if (!sh) return;
-
-  formatoEncabezado_(sh);
-
-  sh.getRange('A:A').setNumberFormat('dd/mm/yyyy');
-  sh.getRange('C:C').setNumberFormat('@');
-  sh.getRange('E:E').setNumberFormat('@');
-  sh.getRange('H:H').setNumberFormat('@');
-  sh.getRange('I:J').setNumberFormat('dd/mm/yyyy hh:mm:ss');
-  sh.getRange('N:N').setNumberFormat('dd/mm/yyyy hh:mm:ss');
-
-  setAnchosColumnas_(sh, {
-    1: 105,  // Fecha
-    2: 90,   // HR
-    3: 115,  // TokenQR
-    4: 180,  // ChoferPlanificado
-    5: 145,  // VueltaPlanificada
-    6: 145,  // EstadoActual
-    7: 180,  // ChoferSalida
-    8: 125,  // VueltaSalida
-    9: 165,  // HoraSalida
-    10: 165, // HoraRetorno
-    11: 145, // EstadoRetorno
-    12: 280, // ObservacionSalida
-    13: 280, // ObservacionRetorno
-    14: 170  // UltimaActualizacion
-  });
-
-  sh.getRange('L:M').setWrap(true);
-}
+      const opt = document.createElement('option');
+      opt.value = texto;
+      opt.textContent = texto;
+      sel.appendChild(opt);
+    });
+  }
 
 
-function aplicarFormatoChoferes_(sh) {
-  if (!sh) return;
+  /****************************************************
+   * MODO
+   ****************************************************/
 
-  formatoEncabezado_(sh);
+  function actualizarModo() {
+    const modo = document.getElementById('modo').value;
 
-  setAnchosColumnas_(sh, {
-    1: 220, // Chofer
-    2: 90   // Activo
-  });
-}
+    document.getElementById('panelSalida').classList.add('hidden');
+    document.getElementById('panelRetorno').classList.add('hidden');
+    document.getElementById('panelCancelarSalida').classList.add('hidden');
+    document.getElementById('panelIncidencia').classList.add('hidden');
 
+    if (modo === 'SALIDA') {
+      document.getElementById('panelSalida').classList.remove('hidden');
+    }
 
-function aplicarFormatoMovimientos_(sh) {
-  if (!sh) return;
+    if (modo === 'RETORNO') {
+      document.getElementById('panelRetorno').classList.remove('hidden');
+    }
 
-  formatoEncabezado_(sh);
+    if (modo === 'CANCELAR_SALIDA') {
+      document.getElementById('panelCancelarSalida').classList.remove('hidden');
+    }
 
-  sh.getRange('A:A').setNumberFormat('dd/mm/yyyy hh:mm:ss');
-
-  setAnchosColumnas_(sh, {
-    1: 170, // Timestamp
-    2: 150, // Accion
-    3: 90,  // HR
-    4: 115, // TokenQR
-    5: 180, // Chofer
-    6: 90,  // Vuelta
-    7: 145, // EstadoRetorno
-    8: 230, // Usuario
-    9: 320  // Observacion
-  });
-
-  sh.getRange('I:I').setWrap(true);
-}
-
-
-function aplicarFormatoControlDiario_(sh) {
-  if (!sh) return;
-
-  sh.getRange('A1:B1')
-    .setFontWeight('bold')
-    .setHorizontalAlignment('center')
-    .setVerticalAlignment('middle');
-
-  sh.getRange('A3:B3')
-    .setFontWeight('bold')
-    .setHorizontalAlignment('center')
-    .setVerticalAlignment('middle');
-
-  sh.getRange('B1').setNumberFormat('dd/mm/yyyy');
-
-  setAnchosColumnas_(sh, {
-    1: 240, // Indicador
-    2: 120  // Valor
-  });
-
-  sh.getRange('A:A').setWrap(true);
-}
-
-
-function aplicarFormatoHistorialControl_(sh) {
-  if (!sh) return;
-
-  formatoEncabezado_(sh);
-
-  sh.getRange('A:A').setNumberFormat('dd/mm/yyyy');
-  sh.getRange('M:M').setNumberFormat('dd/mm/yyyy hh:mm:ss');
-  sh.getRange('N:N').setNumberFormat('@');
-
-  setAnchosColumnas_(sh, {
-    1: 115,  // Fecha
-    2: 110,  // HR del día
-    3: 170,  // Planificadas sin salir
-    4: 150,  // Salida cancelada
-    5: 105,  // En calle
-    6: 120,  // Retornadas
-    7: 160,  // Retorno completo
-    8: 150,  // Retorno parcial
-    9: 120,  // Incidencias
-    10: 150, // Cambio de chofer
-    11: 145, // Cambio de vuelta
-    12: 170, // Pendientes de retorno
-    13: 175, // UltimaActualizacion
-    14: 110  // Periodo
-  });
-}
-
-
-function aplicarFormatoControlChoferes_(sh) {
-  if (!sh) return;
-
-  formatoEncabezado_(sh);
-
-  sh.getRange('A:A').setNumberFormat('dd/mm/yyyy');
-  sh.getRange('C:C').setNumberFormat('@');
-
-  setAnchosColumnas_(sh, {
-    1: 115, // Fecha
-    2: 190, // Chofer
-    3: 110, // Vuelta
-    4: 120  // Cantidad HR
-  });
-
-  const lastCol = sh.getLastColumn();
-
-  if (lastCol > 4) {
-    for (let c = 5; c <= lastCol; c++) {
-      sh.setColumnWidth(c, 95);
+    if (modo === 'INCIDENCIA') {
+      document.getElementById('panelIncidencia').classList.remove('hidden');
     }
   }
-}
 
-function migrarHojasRutaEstructuraSimple() {
-  const ui = SpreadsheetApp.getUi();
 
-  const confirma = ui.alert(
-    'Migrar Hojas_Ruta',
-    'Esto va a rearmar la hoja Hojas_Ruta con la estructura simple y eliminar columnas como Cliente, Direccion, QR e ImprimirQR. Hacé una copia antes. ¿Continuar?',
-    ui.ButtonSet.YES_NO
-  );
+  /****************************************************
+   * ESCÁNER QR
+   ****************************************************/
 
-  if (confirma !== ui.Button.YES) {
-    return;
+  function iniciarScanner() {
+    mostrarMensaje('Iniciando cámara...', '');
+
+    document.getElementById('busquedaManual').blur();
+
+    if (document.activeElement) {
+      document.activeElement.blur();
+    }
+
+    const reader = document.getElementById('reader');
+    reader.innerHTML = '';
+
+    if (scannerActivo) {
+      mostrarMensaje('La cámara ya está activa.', '');
+      return;
+    }
+
+    html5QrCode = new Html5Qrcode('reader');
+
+    const config = {
+      fps: 10,
+      qrbox: { width: 250, height: 250 }
+    };
+
+    html5QrCode.start(
+      { facingMode: 'environment' },
+      config,
+      function(decodedText) {
+        detenerScanner(false).then(function() {
+          buscarCodigo(decodedText);
+        });
+      },
+      function(errorMessage) {
+        // No mostramos errores de lectura continua.
+      }
+    ).then(function() {
+      scannerActivo = true;
+      mostrarMensaje('Cámara activa. Apuntá al QR.', 'ok');
+    }).catch(function(err) {
+      scannerActivo = false;
+      html5QrCode = null;
+      document.getElementById('reader').innerHTML = '';
+
+      mostrarMensaje(
+        'No se pudo abrir la cámara. Revisá permisos del navegador. Error: ' + err,
+        'error'
+      );
+    });
   }
 
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sh = getSheet_(HOJA_HR);
 
-  const lastRow = sh.getLastRow();
-  const lastCol = sh.getLastColumn();
+  function detenerScanner(mostrar) {
+    return new Promise(function(resolve) {
+      if (!html5QrCode || !scannerActivo) {
+        scannerActivo = false;
+        html5QrCode = null;
 
-  const headersActuales = sh.getRange(1, 1, 1, lastCol).getValues()[0]
-    .map(h => String(h || '').trim());
+        if (mostrar !== false) {
+          mostrarMensaje('La cámara no está activa.', '');
+        }
 
-  const mapViejo = {};
-  headersActuales.forEach((h, i) => {
-    if (h) mapViejo[h] = i + 1;
-  });
+        resolve();
+        return;
+      }
 
-  let nuevasFilas = [];
+      html5QrCode.stop().then(function() {
+        scannerActivo = false;
 
-  if (lastRow >= 2) {
-    const data = sh.getRange(2, 1, lastRow - 1, lastCol).getValues();
+        try {
+          html5QrCode.clear();
+        } catch (e) {}
 
-    nuevasFilas = data.map(row => {
-      return HEADERS_HR.map(header => {
-        if (!mapViejo[header]) return '';
-        return row[mapViejo[header] - 1];
+        html5QrCode = null;
+        document.getElementById('reader').innerHTML = '';
+
+        if (mostrar !== false) {
+          mostrarMensaje('Cámara detenida.', '');
+        }
+
+        resolve();
+      }).catch(function(err) {
+        scannerActivo = false;
+        html5QrCode = null;
+        document.getElementById('reader').innerHTML = '';
+        resolve();
       });
     });
   }
 
-  sh.clear();
 
-  sh.getRange(1, 1, 1, HEADERS_HR.length).setValues([HEADERS_HR]);
+  /****************************************************
+   * BÚSQUEDA
+   ****************************************************/
 
-  if (nuevasFilas.length > 0) {
-    sh.getRange(2, 1, nuevasFilas.length, HEADERS_HR.length).setValues(nuevasFilas);
-  }
+  function buscarManual() {
+    const codigo = document.getElementById('busquedaManual').value.trim();
 
-  aplicarFormatoHojasRuta_(sh);
+    document.getElementById('busquedaManual').blur();
 
-  ui.alert('Hojas_Ruta migrada correctamente a la estructura simple.');
-}
-
-
-function prepararControlDiario_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sh = ss.getSheetByName(HOJA_CONTROL);
-
-  if (!sh) {
-    sh = ss.insertSheet(HOJA_CONTROL);
-  }
-
-  sh.clear();
-
-  sh.getRange('A1').setValue('Fecha control');
-  sh.getRange('B1').setValue(new Date());
-
-  const valoresControl = armarValoresControl_(crearIndicadoresVacios_());
-
-  sh.getRange(3, 1, valoresControl.length, 2).setValues(valoresControl);
-
-  sh.getRange('A1:B1').setFontWeight('bold');
-  sh.getRange(3, 1, 1, 2).setFontWeight('bold');
-  sh.getRange('B1').setNumberFormat('dd/mm/yyyy');
-  sh.autoResizeColumns(1, 2);
-}
-
-/****************************************************
- * TOKENS Y QR
- ****************************************************/
-
-function generarLoteQrPendientesSalida() {
-  const ui = SpreadsheetApp.getUi();
-
-  const respuesta = ui.prompt(
-    'Generar lote de QR pendientes de salida',
-    '¿Cuántos QR pendientes de salida querés generar? Ejemplo: 32, 40, 48, 100',
-    ui.ButtonSet.OK_CANCEL
-  );
-
-  if (respuesta.getSelectedButton() !== ui.Button.OK) {
-    return;
-  }
-
-  const cantidad = Number(String(respuesta.getResponseText() || '').trim());
-
-  if (!cantidad || cantidad <= 0) {
-    ui.alert('Tenés que ingresar una cantidad válida.');
-    return;
-  }
-
-  if (cantidad > 500) {
-    ui.alert('Por seguridad, generá como máximo 500 QR por vez.');
-    return;
-  }
-
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-
-  try {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    asegurarHojaConHeaders_(ss, HOJA_HR, HEADERS_HR);
-
-    const sh = getSheet_(HOJA_HR);
-    const map = headerMap_(sh);
-    const lastRow = sh.getLastRow();
-
-    const tokensExistentes = new Set();
-
-    if (lastRow >= 2) {
-      const data = sh.getRange(2, 1, lastRow - 1, sh.getLastColumn()).getValues();
-
-      data.forEach(function(row) {
-        const token = String(row[map['TokenQR'] - 1] || '').trim().toUpperCase();
-        if (token) tokensExistentes.add(token);
-      });
+    if (!codigo) {
+      mostrarMensaje('Escribí una HR o TokenQR.', 'error');
+      return;
     }
 
-    const ahora = new Date();
-    const nuevasFilas = [];
-    const etiquetas = [];
-
-    for (let i = 0; i < cantidad; i++) {
-      const token = generarTokenUnico_(tokensExistentes);
-      tokensExistentes.add(token);
-
-      const fila = new Array(HEADERS_HR.length).fill('');
-
-      fila[map['TokenQR'] - 1] = token;
-      fila[map['EstadoActual'] - 1] = ESTADO_PENDIENTE_SALIDA;
-      fila[map['UltimaActualizacion'] - 1] = ahora;
-
-      nuevasFilas.push(fila);
-      etiquetas.push({ token: token });
-    }
-
-    const filaInicio = sh.getLastRow() + 1;
-
-    sh.getRange(filaInicio, 1, nuevasFilas.length, HEADERS_HR.length)
-      .setValues(nuevasFilas);
-
-    aplicarFormatoHojasRuta_(sh);
-
-    generarHojaEtiquetasDesdeTokens_(etiquetas);
-
-    ui.alert(
-      'Se generaron ' + cantidad + ' QR pendientes de salida.\n\n' +
-      'Desde: ' + etiquetas[0].token + '\n' +
-      'Hasta: ' + etiquetas[etiquetas.length - 1].token + '\n\n' +
-      'En Hojas_Ruta solo se guardó el TokenQR y el estado PENDIENTE_SALIDA.\n' +
-      'La hoja Etiquetas_QR quedó lista para imprimir.'
-    );
-
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-function generarHojaEtiquetasDesdeTokens_(etiquetas) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  let hojaImp = ss.getSheetByName(HOJA_ETIQUETAS);
-
-  if (!hojaImp) {
-    hojaImp = ss.insertSheet(HOJA_ETIQUETAS);
-  } else {
-    hojaImp.clear();
+    buscarCodigo(codigo);
   }
 
-  if (!etiquetas || etiquetas.length === 0) {
-    SpreadsheetApp.getUi().alert('No hay etiquetas para imprimir.');
-    return;
-  }
 
-  const etiquetasPorFila = 5;
-  const altoFilaTexto = 24;
-  const altoFilaQr = 135;
-  const anchoColumna = 145;
-  const qrSize = 220;
+  function buscarCodigo(codigo) {
+    mostrarMensaje('Buscando hoja de ruta...', '');
 
-  hojaImp.setHiddenGridlines(true);
+    apiCall('buscarHR', {
+      codigo: codigo
+    }).then(function(res) {
+      if (!res.ok) {
+        mostrarMensaje(res.mensaje || 'No encontré la HR.', 'error');
+        return;
+      }
 
-  for (let c = 1; c <= etiquetasPorFila; c++) {
-    hojaImp.setColumnWidth(c, anchoColumna);
-  }
-
-  etiquetas.forEach((item, index) => {
-    const token = String(item.token || '').trim();
-
-    if (!token) return;
-
-    const columna = (index % etiquetasPorFila) + 1;
-    const bloque = Math.floor(index / etiquetasPorFila);
-
-    const filaTexto = bloque * 2 + 1;
-    const filaQr = filaTexto + 1;
-
-    hojaImp.setRowHeight(filaTexto, altoFilaTexto);
-    hojaImp.setRowHeight(filaQr, altoFilaQr);
-
-    const celdaTexto = hojaImp.getRange(filaTexto, columna);
-    celdaTexto.setValue(token);
-    celdaTexto.setFontWeight('bold');
-    celdaTexto.setFontSize(12);
-    celdaTexto.setHorizontalAlignment('center');
-    celdaTexto.setVerticalAlignment('middle');
-
-    const urlQr = 'https://quickchart.io/qr?text=' + encodeURIComponent(token) + '&size=' + qrSize;
-
-    const celdaQr = hojaImp.getRange(filaQr, columna);
-    celdaQr.setFormula('=IMAGE("' + urlQr + '")');
-    celdaQr.setHorizontalAlignment('center');
-    celdaQr.setVerticalAlignment('middle');
-
-    hojaImp.getRange(filaTexto, columna, 2, 1)
-      .setBorder(true, true, true, true, false, false);
-  });
-
-  hojaImp.activate();
-}
-
-/****************************************************
- * DATOS PARA LA APP
- ****************************************************/
-
-function obtenerDatosIniciales() {
-  return {
-    choferes: obtenerChoferes_(),
-    vueltas: VUELTAS_VALIDAS,
-    estadosRetorno: ESTADOS_RETORNO_VALIDOS
-  };
-}
-
-
-function buscarHR(codigo) {
-  const texto = String(codigo || '').trim();
-
-  if (!texto) {
-    return {
-      ok: false,
-      mensaje: 'No recibí ningún código.'
-    };
-  }
-
-  const tokenLimpio = extraerToken_(texto);
-
-  const sh = getSheet_(HOJA_HR);
-  const map = headerMap_(sh);
-  const data = sh.getDataRange().getValues();
-
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-
-    const tokenFila = String(row[map['TokenQR'] - 1] || '').trim();
-    const hrFila = String(row[map['HR'] - 1] || '').trim();
-
-    if (tokenFila === tokenLimpio || hrFila === tokenLimpio) {
-      return armarRespuestaHR_(row, map, i + 1);
-    }
-  }
-
-  return {
-    ok: false,
-    mensaje: 'No encontré ninguna hoja de ruta para el código: ' + tokenLimpio
-  };
-}
-
-
-/****************************************************
- * REGISTROS DESDE LA APP
- ****************************************************/
-
-function registrarSalida(payload) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-
-  try {
-    const codigo = String(payload.codigo || '').trim();
-    const hrIngresada = String(payload.hr || '').trim();
-    const chofer = String(payload.chofer || '').trim();
-    const vuelta = String(payload.vuelta || '').trim();
-    const observacion = String(payload.observacion || '').trim();
-
-    if (!codigo) return { ok: false, mensaje: 'Falta el código de la HR o TokenQR.' };
-    if (!chofer) return { ok: false, mensaje: 'Tenés que indicar el chofer real de salida.' };
-    if (!VUELTAS_VALIDAS.includes(vuelta)) return { ok: false, mensaje: 'Vuelta inválida.' };
-
-    const encontrado = buscarFilaPorCodigo_(codigo);
-
-    if (!encontrado.ok) {
-      return { ok: false, mensaje: encontrado.mensaje };
-    }
-
-    const sh = encontrado.sheet;
-    const map = encontrado.map;
-    const row = encontrado.row;
-    const fila = encontrado.fila;
-
-    const estadoOriginal = String(row[map['EstadoActual'] - 1] || '').trim().toUpperCase();
-    const estadoOperativo = normalizarEstadoOperativo_(estadoOriginal);
-
-    if (!estadoPermiteSalida_(estadoOriginal)) {
-      return {
-        ok: false,
-        mensaje: 'No se puede registrar salida. Estado actual: ' + (estadoOriginal || estadoOperativo)
-      };
-    }
-
-    const token = String(row[map['TokenQR'] - 1] || '').trim();
-    const hrFila = String(row[map['HR'] - 1] || '').trim();
-    const hrFinal = hrFila || hrIngresada;
-
-    if (!token) {
-      return {
-        ok: false,
-        mensaje: 'La fila encontrada no tiene TokenQR.'
-      };
-    }
-
-    if (!hrFinal) {
-      return {
-        ok: false,
-        mensaje: 'Tenés que cargar la HR antes de confirmar la salida.'
-      };
-    }
-
-    const ahora = new Date();
-
-    const fechaPlanificadaActual = row[map['Fecha'] - 1];
-    const choferPlanificadoActual = String(row[map['ChoferPlanificado'] - 1] || '').trim();
-    const vueltaPlanificadaActual = normalizarVuelta_(row[map['VueltaPlanificada'] - 1]);
-
-    // Si la fila no tenía Fecha, usamos hoy como fecha planificada/referencia.
-    if (!fechaPlanificadaActual) {
-      sh.getRange(fila, map['Fecha']).setValue(ahora);
-    }
-
-    // Si la fila no tenía HR, usamos la HR cargada desde la app.
-    if (!hrFila) {
-      sh.getRange(fila, map['HR']).setValue(hrFinal);
-    }
-
-    // Si no había chofer planificado, copiamos el chofer real.
-    // Si ya había chofer planificado, NO lo pisamos.
-    if (!choferPlanificadoActual) {
-      sh.getRange(fila, map['ChoferPlanificado']).setValue(chofer);
-    }
-
-    // Si no había vuelta planificada, copiamos la vuelta real.
-    // Si ya había vuelta planificada, NO la pisamos.
-    if (!vueltaPlanificadaActual) {
-      sh.getRange(fila, map['VueltaPlanificada']).setValue(vuelta);
-    }
-
-    // Datos reales de salida.
-    sh.getRange(fila, map['EstadoActual']).setValue('EN CALLE');
-    sh.getRange(fila, map['ChoferSalida']).setValue(chofer);
-    sh.getRange(fila, map['VueltaSalida']).setValue(vuelta);
-    sh.getRange(fila, map['HoraSalida']).setValue(ahora);
-    sh.getRange(fila, map['ObservacionSalida']).setValue(observacion);
-    sh.getRange(fila, map['UltimaActualizacion']).setValue(ahora);
-
-    registrarMovimiento_({
-      accion: 'SALIDA',
-      hr: hrFinal,
-      token: token,
-      chofer: chofer,
-      vuelta: vuelta,
-      estadoRetorno: '',
-      observacion: observacion
+      mostrarDatos(res);
+    }).catch(function(err) {
+      mostrarMensaje(err.message, 'error');
     });
+  }
 
-    // Si algún día activás actualización automática, se recalcula tanto el día planificado
-    // como el día real de salida. Así se descuenta pendiente de la fecha planificada.
-    actualizarTablerosAutomaticos_(fechaPlanificadaActual || ahora);
-    if (fechaPlanificadaActual && normalizarFechaKey_(fechaPlanificadaActual) !== normalizarFechaKey_(ahora)) {
-      actualizarTablerosAutomaticos_(ahora);
+
+  function mostrarDatos(res) {
+    codigoActual = res.token || res.hr;
+    hrActual = res.hr;
+
+    document.getElementById('hr').textContent = res.hr || '(sin cargar)';
+    document.getElementById('hrSalida').value = res.hr || '';
+
+    document.getElementById('choferPlanificado').textContent = res.choferPlanificado || '';
+    document.getElementById('vueltaPlanificada').textContent = normalizarVueltaPantalla(res.vueltaPlanificada);
+    document.getElementById('estadoActual').textContent = res.estadoActual || '';
+    document.getElementById('choferSalida').textContent = res.choferSalida || '';
+    document.getElementById('vueltaSalida').textContent = normalizarVueltaPantalla(res.vueltaSalida);
+    document.getElementById('horaSalida').textContent = res.horaSalida || '';
+    document.getElementById('horaRetorno').textContent = res.horaRetorno || '';
+    document.getElementById('estadoRetorno').textContent = res.estadoRetorno || '';
+
+    seleccionarValor('choferReal', res.choferSalida || res.choferPlanificado);
+    seleccionarValor('vueltaReal', normalizarVueltaPantalla(res.vueltaSalida || res.vueltaPlanificada));
+
+    generarAlertas(res);
+
+    document.getElementById('cardDatos').classList.remove('hidden');
+
+    actualizarModo();
+
+    mostrarMensaje('HR encontrada. Revisá los datos y confirmá.', 'ok');
+  }
+
+
+  function normalizarVueltaPantalla(valor) {
+    if (valor === null || valor === undefined) return '';
+
+    const texto = String(valor).trim();
+
+    const matchIso = texto.match(/^(\d{4})-(\d{2})-(\d{2})T/);
+
+    if (matchIso) {
+      const mes = String(Number(matchIso[2]));
+      const dia = String(Number(matchIso[3]));
+      return dia + '-' + mes;
     }
 
-    const cambioChofer =
-      choferPlanificadoActual &&
-      choferPlanificadoActual !== chofer;
+    return texto;
+  }
 
-    const cambioVuelta =
-      vueltaPlanificadaActual &&
-      vueltaPlanificadaActual !== vuelta;
 
-    let mensaje = 'Salida registrada para HR ' + hrFinal + '.';
+  function seleccionarValor(id, valor) {
+    if (valor === null || valor === undefined || valor === '') return;
 
-    if (cambioChofer || cambioVuelta) {
-      mensaje += ' Hubo cambio respecto a lo planificado.';
+    let texto = String(valor).trim();
+
+    if (id === 'vueltaReal') {
+      texto = normalizarVueltaPantalla(texto);
+
+      const vueltasPermitidas = ['1', '2', '3', '1-2'];
+
+      if (!vueltasPermitidas.includes(texto)) {
+        texto = '1';
+      }
     }
 
-    return {
-      ok: true,
-      mensaje: mensaje
-    };
-
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-function registrarSalidaRapida(payload) {
-  // Compatibilidad con versiones anteriores del index.html.
-  return registrarSalida(payload);
-}
-
-function registrarCancelarSalida(payload) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-
-  try {
-    const codigo = String(payload.codigo || '').trim();
-    const observacion = String(payload.observacion || '').trim();
-
-    if (!codigo) return { ok: false, mensaje: 'Falta el código de la HR.' };
-    if (!observacion) return { ok: false, mensaje: 'Para cancelar la salida, escribí el motivo.' };
-
-    const encontrado = buscarFilaPorCodigo_(codigo);
-
-    if (!encontrado.ok) {
-      return { ok: false, mensaje: encontrado.mensaje };
-    }
-
-    const sh = encontrado.sheet;
-    const map = encontrado.map;
-    const row = encontrado.row;
-    const fila = encontrado.fila;
-
-    const estadoActual = String(row[map['EstadoActual'] - 1] || '').trim().toUpperCase();
-
-    if (estadoActual !== 'EN CALLE') {
-      return {
-        ok: false,
-        mensaje: 'Solo se puede cancelar salida si la HR está EN CALLE. Estado actual: ' + estadoActual
-      };
-    }
-
-    const ahora = new Date();
-
-    const choferSalida = row[map['ChoferSalida'] - 1] || row[map['ChoferPlanificado'] - 1] || '';
-    const vueltaSalida = row[map['VueltaSalida'] - 1] || row[map['VueltaPlanificada'] - 1] || '';
-
-    const observacionSalidaAnterior = String(row[map['ObservacionSalida'] - 1] || '').trim();
-    const observacionFinal = observacionSalidaAnterior
-      ? observacionSalidaAnterior + '\n[CANCELACIÓN] ' + observacion
-      : '[CANCELACIÓN] ' + observacion;
-
-    sh.getRange(fila, map['EstadoActual']).setValue('SALIDA_CANCELADA');
-    sh.getRange(fila, map['ObservacionSalida']).setValue(observacionFinal);
-    sh.getRange(fila, map['UltimaActualizacion']).setValue(ahora);
-
-    registrarMovimiento_({
-      accion: 'CANCELAR_SALIDA',
-      hr: row[map['HR'] - 1],
-      token: row[map['TokenQR'] - 1],
-      chofer: choferSalida,
-      vuelta: vueltaSalida,
-      estadoRetorno: '',
-      observacion: observacion
-    });
-
-    actualizarTablerosAutomaticos_(row[map['HoraSalida'] - 1] || row[map['Fecha'] - 1]);
-
-    return {
-      ok: true,
-      mensaje: 'Salida cancelada para HR ' + row[map['HR'] - 1] + '. La HR queda disponible para una nueva salida.'
-    };
-
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-function registrarRetorno(payload) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-
-  try {
-    const codigo = String(payload.codigo || '').trim();
-    const estadoRetorno = String(payload.estadoRetorno || '').trim().toUpperCase();
-    const observacion = String(payload.observacion || '').trim();
-
-    if (!codigo) return { ok: false, mensaje: 'Falta el código de la HR.' };
-
-    if (!ESTADOS_RETORNO_VALIDOS.includes(estadoRetorno)) {
-      return { ok: false, mensaje: 'Estado de retorno inválido.' };
-    }
-
-    const encontrado = buscarFilaPorCodigo_(codigo);
-
-    if (!encontrado.ok) {
-      return { ok: false, mensaje: encontrado.mensaje };
-    }
-
-    const sh = encontrado.sheet;
-    const map = encontrado.map;
-    const row = encontrado.row;
-    const fila = encontrado.fila;
-
-    const ahora = new Date();
-
-    const choferSalida = row[map['ChoferSalida'] - 1] || row[map['ChoferPlanificado'] - 1] || '';
-    const vueltaSalida = row[map['VueltaSalida'] - 1] || row[map['VueltaPlanificada'] - 1] || '';
-
-    sh.getRange(fila, map['EstadoActual']).setValue('RETORNADA');
-    sh.getRange(fila, map['HoraRetorno']).setValue(ahora);
-    sh.getRange(fila, map['EstadoRetorno']).setValue(estadoRetorno);
-    sh.getRange(fila, map['ObservacionRetorno']).setValue(observacion);
-    sh.getRange(fila, map['UltimaActualizacion']).setValue(ahora);
-
-    registrarMovimiento_({
-      accion: 'RETORNO',
-      hr: row[map['HR'] - 1],
-      token: row[map['TokenQR'] - 1],
-      chofer: choferSalida,
-      vuelta: vueltaSalida,
-      estadoRetorno: estadoRetorno,
-      observacion: observacion
-    });
-
-    actualizarTablerosAutomaticos_(row[map['HoraSalida'] - 1] || row[map['Fecha'] - 1]);
-
-    return {
-      ok: true,
-      mensaje: 'Retorno registrado para HR ' + row[map['HR'] - 1] + ' como ' + estadoRetorno + '.'
-    };
-
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-
-function registrarIncidencia(payload) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-
-  try {
-    const codigo = String(payload.codigo || '').trim();
-    const observacion = String(payload.observacion || '').trim();
-
-    if (!codigo) return { ok: false, mensaje: 'Falta el código de la HR.' };
-    if (!observacion) return { ok: false, mensaje: 'Para incidencia, escribí una observación.' };
-
-    const encontrado = buscarFilaPorCodigo_(codigo);
-
-    if (!encontrado.ok) {
-      return { ok: false, mensaje: encontrado.mensaje };
-    }
-
-    const sh = encontrado.sheet;
-    const map = encontrado.map;
-    const row = encontrado.row;
-    const fila = encontrado.fila;
-
-    const ahora = new Date();
-
-    sh.getRange(fila, map['EstadoActual']).setValue('INCIDENCIA');
-    sh.getRange(fila, map['ObservacionRetorno']).setValue(observacion);
-    sh.getRange(fila, map['UltimaActualizacion']).setValue(ahora);
-
-    registrarMovimiento_({
-      accion: 'INCIDENCIA',
-      hr: row[map['HR'] - 1],
-      token: row[map['TokenQR'] - 1],
-      chofer: row[map['ChoferSalida'] - 1] || row[map['ChoferPlanificado'] - 1] || '',
-      vuelta: row[map['VueltaSalida'] - 1] || row[map['VueltaPlanificada'] - 1] || '',
-      estadoRetorno: '',
-      observacion: observacion
-    });
-
-    actualizarTablerosAutomaticos_(row[map['HoraSalida'] - 1] || row[map['Fecha'] - 1]);
-
-    return {
-      ok: true,
-      mensaje: 'Incidencia registrada para HR ' + row[map['HR'] - 1] + '.'
-    };
-
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-
-/****************************************************
- * CONTROL DIARIO SIN FÓRMULAS
- ****************************************************/
-
-function actualizarControlDiario() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  let shControl = ss.getSheetByName(HOJA_CONTROL);
-
-  if (!shControl) {
-    prepararControlDiario_();
-    shControl = ss.getSheetByName(HOJA_CONTROL);
-  }
-
-  let fechaControl = shControl.getRange('B1').getValue();
-
-  if (!fechaControl) {
-    fechaControl = new Date();
-    shControl.getRange('B1').setValue(fechaControl);
-  }
-
-  const indicadores = calcularIndicadoresControlPorFecha_(fechaControl);
-  const valoresControl = armarValoresControl_(indicadores);
-
-  shControl.getRange('A1').setValue('Fecha control');
-  shControl.getRange('B1').setValue(fechaControl);
-
-  // Limpia solo el bloque de indicadores para evitar restos si cambia la cantidad de filas.
-  shControl.getRange('A3:B40').clearContent();
-
-  shControl.getRange(3, 1, valoresControl.length, 2).setValues(valoresControl);
-
-  shControl.getRange('A1:B1').setFontWeight('bold');
-  shControl.getRange(3, 1, 1, 2).setFontWeight('bold');
-  shControl.getRange('B1').setNumberFormat('dd/mm/yyyy');
-  shControl.autoResizeColumns(1, 2);
-
-  guardarHistoricoControl_(fechaControl, indicadores);
-}
-
-function actualizarTablerosOperativos() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  let shControl = ss.getSheetByName(HOJA_CONTROL);
-
-  if (!shControl) {
-    asegurarHojaControlDiarioSinLimpiar_();
-    shControl = ss.getSheetByName(HOJA_CONTROL);
-  }
-
-  const hoy = new Date();
-
-  // El botón siempre actualiza el tablero del día actual.
-  shControl.getRange('A1').setValue('Fecha control');
-  shControl.getRange('B1').setValue(hoy);
-  shControl.getRange('B1').setNumberFormat('dd/mm/yyyy');
-
-  actualizarControlDiario();
-  actualizarControlChoferesDia();
-
-  aplicarFormatosVisuales(false);
-
-  SpreadsheetApp.getUi().alert(
-    'Tableros actualizados correctamente para la fecha de hoy.\n\n' +
-    'Se actualizaron:\n' +
-    '- Control_Diario\n' +
-    '- Historial_Control_HR\n' +
-    '- Control_Choferes_Dia'
-  );
-}
-
-function actualizarTablerosAutomaticos_(fecha) {
-  if (!ACTUALIZAR_TABLEROS_AUTOMATICAMENTE) {
-    return;
-  }
-
-  actualizarControlDiario();
-
-  if (fecha) {
-    actualizarHistorialControlPorFecha_(fecha);
-  }
-
-  actualizarControlChoferesDia();
-}
-
-function prepararHistorialControl_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  asegurarHojaConHeaders_(ss, HOJA_HIST_CONTROL, HEADERS_HIST_CONTROL);
-
-  const sh = ss.getSheetByName(HOJA_HIST_CONTROL);
-
-  sh.setFrozenRows(1);
-  sh.getRange(1, 1, 1, HEADERS_HIST_CONTROL.length).setFontWeight('bold');
-  sh.getRange('A:A').setNumberFormat('dd/mm/yyyy');
-  sh.getRange('N:N').setNumberFormat('@');
-  sh.autoResizeColumns(1, HEADERS_HIST_CONTROL.length);
-}
-
-
-function actualizarHistorialControlDesdeControlDiario() {
-  const shControl = getSheet_(HOJA_CONTROL);
-
-  let fechaControl = shControl.getRange('B1').getValue();
-
-  if (!fechaControl) {
-    fechaControl = new Date();
-    shControl.getRange('B1').setValue(fechaControl);
-  }
-
-  const indicadores = calcularIndicadoresControlPorFecha_(fechaControl);
-
-  guardarHistoricoControl_(fechaControl, indicadores);
-
-  SpreadsheetApp.getUi().alert('Historial_Control_HR actualizado para la fecha seleccionada en Control_Diario.');
-}
-
-
-function actualizarHistorialControlPorFecha_(fecha) {
-  if (!fecha) return;
-
-  const indicadores = calcularIndicadoresControlPorFecha_(fecha);
-
-  guardarHistoricoControl_(fecha, indicadores);
-}
-
-
-function calcularIndicadoresControlPorFecha_(fechaControl) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const shHR = ss.getSheetByName(HOJA_HR);
-
-  const indicadores = crearIndicadoresVacios_();
-
-  if (!shHR) return indicadores;
-
-  const lastRow = shHR.getLastRow();
-
-  if (lastRow < 2) return indicadores;
-
-  const map = headerMap_(shHR);
-  const fechaKey = normalizarFechaKey_(fechaControl);
-
-  if (!fechaKey) return indicadores;
-
-  const data = shHR
-    .getRange(2, 1, lastRow - 1, shHR.getLastColumn())
-    .getValues();
-
-  data.forEach(row => {
-    const estadoOriginal = String(row[map['EstadoActual'] - 1] || '').trim().toUpperCase();
-    const estado = normalizarEstadoOperativo_(estadoOriginal);
-    const estadoRetorno = String(row[map['EstadoRetorno'] - 1] || '').trim().toUpperCase();
-
-    const fechaPlanificadaKey = normalizarFechaKey_(row[map['Fecha'] - 1]);
-    const horaSalida = row[map['HoraSalida'] - 1];
-    const fechaSalidaKey = normalizarFechaKey_(horaSalida);
-
-    const choferPlan = String(row[map['ChoferPlanificado'] - 1] || '').trim();
-    const choferSalida = String(row[map['ChoferSalida'] - 1] || '').trim();
-
-    const vueltaPlan = normalizarVuelta_(row[map['VueltaPlanificada'] - 1]);
-    const vueltaSalida = normalizarVuelta_(row[map['VueltaSalida'] - 1]);
-
-    // Pendientes de salida: se miden contra la Fecha planificada.
-    // Si una HR planificada el 25/06 sale el 26/06, deja de ser pendiente del 25/06
-    // porque ya tiene HoraSalida.
-    if (
-      fechaPlanificadaKey === fechaKey &&
-      !fechaSalidaKey &&
-      estadoEsPendienteSalida_(estadoOriginal)
-    ) {
-      indicadores.pendientesSalida++;
-    }
-
-    // Operación real del día: se mide contra HoraSalida.
-    if (fechaSalidaKey !== fechaKey) return;
-
-    indicadores.total++;
-
-    if (estado === 'SALIDA_CANCELADA') indicadores.salidaCancelada++;
-    if (estado === 'EN CALLE') indicadores.enCalle++;
-    if (estado === 'RETORNADA') indicadores.retornadas++;
-    if (estado === 'INCIDENCIA') indicadores.incidencias++;
-
-    if (estadoRetorno === 'COMPLETO') indicadores.completo++;
-    if (estadoRetorno === 'PARCIAL') indicadores.parcial++;
-
-    if (choferSalida && choferPlan && choferSalida !== choferPlan) indicadores.cambioChofer++;
-    if (vueltaSalida && vueltaPlan && vueltaSalida !== vueltaPlan) indicadores.cambioVuelta++;
-
-    if (estado === 'EN CALLE') indicadores.pendientesRetorno++;
-  });
-
-  return indicadores;
-}
-
-
-function armarValoresControl_(indicadores) {
-  return [
-    ['Indicador', 'Valor'],
-    ['HR del día', indicadores.total || 0],
-    ['Pendientes de salida', indicadores.pendientesSalida || 0],
-    ['Salida cancelada', indicadores.salidaCancelada || 0],
-    ['En calle', indicadores.enCalle || 0],
-    ['Retornadas', indicadores.retornadas || 0],
-    ['Retorno completo', indicadores.completo || 0],
-    ['Retorno parcial', indicadores.parcial || 0],
-    ['Incidencias', indicadores.incidencias || 0],
-    ['Cambio de chofer', indicadores.cambioChofer || 0],
-    ['Cambio de vuelta', indicadores.cambioVuelta || 0],
-    ['Pendientes de retorno', indicadores.pendientesRetorno || 0]
-  ];
-}
-
-
-function guardarHistoricoControl_(fechaControl, indicadores) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  asegurarHojaConHeaders_(ss, HOJA_HIST_CONTROL, HEADERS_HIST_CONTROL);
-
-  const sh = ss.getSheetByName(HOJA_HIST_CONTROL);
-
-  const fechaKey = normalizarFechaKey_(fechaControl);
-
-  if (!fechaKey) return;
-
-  const filaValores = [
-    fechaControl,
-    indicadores.total,
-    indicadores.pendientesSalida || 0,
-    indicadores.salidaCancelada,
-    indicadores.enCalle,
-    indicadores.retornadas,
-    indicadores.completo,
-    indicadores.parcial,
-    indicadores.incidencias,
-    indicadores.cambioChofer,
-    indicadores.cambioVuelta,
-    indicadores.pendientesRetorno,
-    new Date(),
-    obtenerPeriodo_(fechaControl)
-];
-
-  let filaDestino = 0;
-  const lastRow = sh.getLastRow();
-
-  if (lastRow >= 2) {
-    const fechas = sh.getRange(2, 1, lastRow - 1, 1).getValues();
-
-    for (let i = 0; i < fechas.length; i++) {
-      const fechaExistenteKey = normalizarFechaKey_(fechas[i][0]);
-
-      if (fechaExistenteKey === fechaKey) {
-        filaDestino = i + 2;
+    const sel = document.getElementById(id);
+    let existe = false;
+
+    for (let i = 0; i < sel.options.length; i++) {
+      if (sel.options[i].value === texto) {
+        existe = true;
         break;
       }
     }
-  }
 
-  if (filaDestino > 0) {
-    sh.getRange(filaDestino, 1, 1, filaValores.length).setValues([filaValores]);
-  } else {
-    sh.appendRow(filaValores);
-  }
-
-  sh.setFrozenRows(1);
-  sh.getRange(1, 1, 1, HEADERS_HIST_CONTROL.length).setFontWeight('bold');
-  sh.getRange('A:A').setNumberFormat('dd/mm/yyyy');
-  sh.getRange('M:M').setNumberFormat('dd/mm/yyyy hh:mm:ss');
-  sh.getRange('N:N').setNumberFormat('@');
-  sh.autoResizeColumns(1, HEADERS_HIST_CONTROL.length);
-}
-
-/****************************************************
- * CONTROL CHOFERES DÍA
- ****************************************************/
-
-function prepararControlChoferesDia_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  let sh = ss.getSheetByName(HOJA_CONTROL_CHOFERES);
-
-  if (!sh) {
-    sh = ss.insertSheet(HOJA_CONTROL_CHOFERES);
-  }
-
-  sh.clear();
-
-  sh.getRange(1, 1, 1, HEADERS_CONTROL_CHOFERES_BASE.length)
-    .setValues([HEADERS_CONTROL_CHOFERES_BASE]);
-
-  sh.setFrozenRows(1);
-  sh.getRange(1, 1, 1, HEADERS_CONTROL_CHOFERES_BASE.length).setFontWeight('bold');
-  sh.getRange('A:A').setNumberFormat('dd/mm/yyyy');
-  sh.getRange('C:C').setNumberFormat('@'); // Vuelta como texto
-  sh.autoResizeColumns(1, HEADERS_CONTROL_CHOFERES_BASE.length);
-}
-
-
-function actualizarControlChoferesDia() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  const shHR = ss.getSheetByName(HOJA_HR);
-
-  let sh = ss.getSheetByName(HOJA_CONTROL_CHOFERES);
-
-  if (!sh) {
-    sh = ss.insertSheet(HOJA_CONTROL_CHOFERES);
-  }
-
-  sh.clear();
-
-  sh.getRange('A:A').setNumberFormat('dd/mm/yyyy');
-  sh.getRange('C:C').setNumberFormat('@'); // Vuelta como texto
-
-  if (!shHR || shHR.getLastRow() < 2) {
-    sh.getRange(1, 1, 1, HEADERS_CONTROL_CHOFERES_BASE.length)
-      .setValues([HEADERS_CONTROL_CHOFERES_BASE]);
-
-    sh.setFrozenRows(1);
-    sh.getRange(1, 1, 1, HEADERS_CONTROL_CHOFERES_BASE.length).setFontWeight('bold');
-    sh.getRange('A:A').setNumberFormat('dd/mm/yyyy');
-    sh.autoResizeColumns(1, HEADERS_CONTROL_CHOFERES_BASE.length);
-    return;
-  }
-
-  const map = headerMap_(shHR);
-
-  const data = shHR
-    .getRange(2, 1, shHR.getLastRow() - 1, shHR.getLastColumn())
-    .getValues();
-
-  const grupos = {};
-
-  data.forEach(row => {
-    const estado = String(row[map['EstadoActual'] - 1] || '').trim().toUpperCase();
-
-    // Solo salidas válidas actuales.
-    // No toma PENDIENTE_SALIDA, SALIDA_CANCELADA ni INCIDENCIA.
-    if (estado !== 'EN CALLE' && estado !== 'RETORNADA') return;
-
-    const fecha = row[map['HoraSalida'] - 1];
-    const fechaKey = normalizarFechaKey_(fecha);
-
-    if (!fechaKey) return;
-
-    const chofer = String(row[map['ChoferSalida'] - 1] || '').trim();
-
-    if (!chofer) return;
-
-    const hr = String(row[map['HR'] - 1] || '').trim();
-
-    if (!hr) return;
-
-    const vuelta = normalizarVuelta_(row[map['VueltaSalida'] - 1]);
-    const estadoRetorno = String(row[map['EstadoRetorno'] - 1] || '').trim().toUpperCase();
-
-    const key = fechaKey + '||' + chofer;
-
-    if (!grupos[key]) {
-      grupos[key] = {
-        fecha: fecha,
-        fechaKey: fechaKey,
-        chofer: chofer,
-        vueltas: new Set(),
-        hrs: []
-      };
+    if (!existe && id !== 'vueltaReal') {
+      const opt = document.createElement('option');
+      opt.value = texto;
+      opt.textContent = texto;
+      sel.appendChild(opt);
+      existe = true;
     }
 
-    agregarVueltasAlSet_(grupos[key].vueltas, vuelta);
+    if (existe) {
+      sel.value = texto;
+    }
+  }
 
-    grupos[key].hrs.push({
+
+  function generarAlertas(res) {
+    let html = '';
+    const estado = String(res.estadoActual || '').trim().toUpperCase();
+
+    if (estado === 'PENDIENTE_SALIDA' || estado === '') {
+      html += '<div class="alerta">Pendiente de salida. Completá o corregí los datos y confirmá.</div>';
+    }
+
+    if (estado === 'EN CALLE') {
+      html += '<div class="alerta">Atención: esta HR ya figura EN CALLE.</div>';
+    }
+
+    if (estado === 'RETORNADA') {
+      html += '<div class="alerta">Atención: esta HR ya figura RETORNADA.</div>';
+    }
+
+    if (estado === 'SALIDA_CANCELADA') {
+      html += '<div class="alerta">Atención: esta HR tiene la salida cancelada. Puede volver a salir si corresponde.</div>';
+    }
+
+    if (estado === 'INCIDENCIA') {
+      html += '<div class="alerta">Atención: esta HR está en INCIDENCIA.</div>';
+    }
+
+    if (res.choferSalida && res.choferPlanificado && res.choferSalida !== res.choferPlanificado) {
+      html += '<div class="alerta">Chofer real distinto al planificado.</div>';
+    }
+
+    if (res.vueltaSalida && res.vueltaPlanificada && res.vueltaSalida !== res.vueltaPlanificada) {
+      html += '<div class="alerta">Vuelta real distinta a la planificada.</div>';
+    }
+
+    document.getElementById('alertas').innerHTML = html;
+  }
+
+
+  /****************************************************
+   * REGISTROS
+   ****************************************************/
+
+  function confirmarSalida() {
+    if (!codigoActual) {
+      mostrarMensaje('Primero escaneá o buscá una HR.', 'error');
+      return;
+    }
+
+    const estadoActual = String(document.getElementById('estadoActual').textContent || '').trim().toUpperCase();
+
+    const estadosBloqueadosSalida = [
+      'EN CALLE',
+      'RETORNADA',
+      'INCIDENCIA'
+    ];
+
+    if (estadosBloqueadosSalida.includes(estadoActual)) {
+      mostrarMensaje(
+        'No se puede registrar salida. Estado actual: ' + estadoActual,
+        'error'
+      );
+      return;
+    }
+
+    const hr = document.getElementById('hrSalida').value.trim();
+    const chofer = document.getElementById('choferReal').value;
+    const vuelta = document.getElementById('vueltaReal').value;
+    const observacion = document.getElementById('observacionSalida').value;
+
+    if (!hr) {
+      mostrarMensaje('Cargá el número de HR.', 'error');
+      return;
+    }
+
+    if (!chofer) {
+      mostrarMensaje('Seleccioná un chofer.', 'error');
+      return;
+    }
+
+    if (!vuelta) {
+      mostrarMensaje('Seleccioná una vuelta.', 'error');
+      return;
+    }
+
+    const confirma = confirm('¿Confirmás registrar salida para la HR ' + hr + '?');
+
+    if (!confirma) {
+      return;
+    }
+
+    mostrarMensaje('Registrando salida...', '');
+
+    apiCall('registrarSalida', {
+      codigo: codigoActual,
       hr: hr,
-      token: String(row[map['TokenQR'] - 1] || '').trim(),
+      chofer: chofer,
       vuelta: vuelta,
-      estado: estado,
-      estadoRetorno: estadoRetorno,
-      horaSalida: row[map['HoraSalida'] - 1],
-      horaRetorno: row[map['HoraRetorno'] - 1]
-    });
-  });
-
-  const listaGrupos = Object.values(grupos);
-
-  listaGrupos.sort((a, b) => {
-    if (a.fechaKey !== b.fechaKey) {
-      return a.fechaKey.localeCompare(b.fechaKey);
-    }
-
-    return a.chofer.localeCompare(b.chofer);
-  });
-
-  listaGrupos.forEach(g => {
-    g.hrs.sort((a, b) => {
-      const tA = a.horaSalida instanceof Date ? a.horaSalida.getTime() : 0;
-      const tB = b.horaSalida instanceof Date ? b.horaSalida.getTime() : 0;
-
-      if (tA !== tB) return tA - tB;
-
-      return String(a.hr).localeCompare(String(b.hr));
-    });
-  });
-
-  const maxHR = listaGrupos.reduce((max, g) => {
-    return Math.max(max, g.hrs.length);
-  }, 0);
-
-  const headers = HEADERS_CONTROL_CHOFERES_BASE.slice();
-
-  for (let i = 1; i <= maxHR; i++) {
-    headers.push('HR ' + i);
-  }
-
-  const valores = [headers];
-
-  listaGrupos.forEach(g => {
-    const fila = [
-      g.fecha,
-      g.chofer,
-      "'" + resumirVueltas_(g.vueltas),
-      g.hrs.length
-      ];
-      
-      g.hrs.forEach(item => {
-      fila.push(item.hr);
-    });
-
-    while (fila.length < headers.length) {
-      fila.push('');
-    }
-
-    valores.push(fila);
-  });
-
-  sh.getRange(1, 1, valores.length, headers.length).setValues(valores);
-
-  sh.setFrozenRows(1);
-  sh.getRange(1, 1, 1, headers.length).setFontWeight('bold');
-  sh.getRange('A:A').setNumberFormat('dd/mm/yyyy');
-  sh.getRange('C:C').setNumberFormat('@');
-
-  // Colorea y agrega notas solo en las columnas HR.
-  if (listaGrupos.length > 0 && maxHR > 0) {
-    const notas = [];
-    const colores = [];
-
-    listaGrupos.forEach(g => {
-      const filaNotas = [];
-      const filaColores = [];
-
-      for (let i = 0; i < maxHR; i++) {
-        const item = g.hrs[i];
-
-        if (!item) {
-          filaNotas.push('');
-          filaColores.push('#ffffff');
-          continue;
-        }
-
-        filaNotas.push(armarNotaHRChofer_(item));
-        filaColores.push(colorPorEstadoHR_(item.estado, item.estadoRetorno));
+      observacion: observacion
+    }).then(function(res) {
+      if (!res.ok) {
+        mostrarMensaje(res.mensaje || 'No se pudo registrar salida.', 'error');
+        return;
       }
 
-      notas.push(filaNotas);
-      colores.push(filaColores);
+      mostrarMensaje(res.mensaje, 'ok');
+      limpiar();
+
+    }).catch(function(err) {
+      mostrarMensaje(err.message, 'error');
     });
-
-    const rangoHR = sh.getRange(2, 5, listaGrupos.length, maxHR);
-    rangoHR.setNotes(notas);
-    rangoHR.setBackgrounds(colores);
   }
 
-  // Leyenda visual
-  const filaLeyenda = valores.length + 2;
 
-  sh.getRange(filaLeyenda, 1).setValue('Leyenda');
-  sh.getRange(filaLeyenda, 1).setFontWeight('bold');
-
-  sh.getRange(filaLeyenda + 1, 1).setValue('En calle');
-  sh.getRange(filaLeyenda + 1, 1).setBackground('#cfe2f3');
-
-  sh.getRange(filaLeyenda + 2, 1).setValue('Retornada completa');
-  sh.getRange(filaLeyenda + 2, 1).setBackground('#d9ead3');
-
-  sh.getRange(filaLeyenda + 3, 1).setValue('Retornada parcial');
-  sh.getRange(filaLeyenda + 3, 1).setBackground('#fff2cc');
-
-  sh.autoResizeColumns(1, headers.length);
-}
-
-
-function agregarVueltasAlSet_(setVueltas, vuelta) {
-  const v = String(vuelta || '').trim();
-
-  if (!v) return;
-
-  if (v === '1-2') {
-    setVueltas.add('1');
-    setVueltas.add('2');
-    return;
+  function confirmarSalidaRapida() {
+    // Compatibilidad: si quedó algún botón viejo en caché, usa la misma salida normal.
+    confirmarSalida();
   }
 
-  if (v === '1' || v === '2' || v === '3') {
-    setVueltas.add(v);
-    return;
-  }
 
-  setVueltas.add(v);
-}
-
-
-function resumirVueltas_(setVueltas) {
-  const orden = ['1', '2', '3'];
-  const resultado = [];
-
-  orden.forEach(v => {
-    if (setVueltas.has(v)) {
-      resultado.push(v);
+  function confirmarCancelarSalida() {
+    if (!codigoActual) {
+      mostrarMensaje('Primero escaneá o buscá una HR.', 'error');
+      return;
     }
-  });
 
-  setVueltas.forEach(v => {
-    if (!orden.includes(v)) {
-      resultado.push(v);
+    const observacion = document.getElementById('observacionCancelarSalida').value.trim();
+
+    if (!observacion) {
+      mostrarMensaje('Escribí el motivo de cancelación de salida.', 'error');
+      return;
     }
-  });
 
-  return resultado.join('-');
-}
+    const confirma = confirm('¿Confirmás cancelar la salida de esta HR?');
 
+    if (!confirma) {
+      return;
+    }
 
-function colorPorEstadoHR_(estado, estadoRetorno) {
-  const e = String(estado || '').trim().toUpperCase();
-  const r = String(estadoRetorno || '').trim().toUpperCase();
+    mostrarMensaje('Cancelando salida...', '');
 
-  if (e === 'EN CALLE') {
-    return '#cfe2f3'; // azul claro
-  }
-
-  if (e === 'RETORNADA' && r === 'COMPLETO') {
-    return '#d9ead3'; // verde claro
-  }
-
-  if (e === 'RETORNADA' && r === 'PARCIAL') {
-    return '#fff2cc'; // amarillo claro
-  }
-
-  return '#ffffff';
-}
-
-
-function armarNotaHRChofer_(item) {
-  return [
-    'TokenQR: ' + (item.token || ''),
-    'Vuelta: ' + (item.vuelta || ''),
-    'Estado: ' + (item.estado || ''),
-    'Estado retorno: ' + (item.estadoRetorno || ''),
-    'Fecha y hora salida: ' + formatearFecha_(item.horaSalida),
-    'Fecha y hora retorno: ' + formatearFecha_(item.horaRetorno)
-  ].join('\n');
-}
-
-/****************************************************
- * FUNCIONES AUXILIARES
- ****************************************************/
-
-function getSheet_(nombre) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sh = ss.getSheetByName(nombre);
-
-  if (!sh) {
-    throw new Error('No existe la hoja: ' + nombre);
-  }
-
-  return sh;
-}
-
-
-function headerMap_(sheet) {
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  const map = {};
-
-  headers.forEach((h, i) => {
-    const key = String(h || '').trim();
-    if (key) map[key] = i + 1;
-  });
-
-  return map;
-}
-
-
-function generarTokenUnico_(tokensExistentes) {
-  tokensExistentes = tokensExistentes || new Set();
-
-  let mayorNumero = 0;
-
-  tokensExistentes.forEach(function(token) {
-    const texto = String(token || '').trim().toUpperCase();
-
-    const match = texto.match(/^T(\d{6})$/);
-
-    if (match) {
-      const numero = Number(match[1]);
-
-      if (numero > mayorNumero) {
-        mayorNumero = numero;
+    apiCall('registrarCancelarSalida', {
+      codigo: codigoActual,
+      observacion: observacion
+    }).then(function(res) {
+      if (!res.ok) {
+        mostrarMensaje(res.mensaje || 'No se pudo cancelar la salida.', 'error');
+        return;
       }
+
+      mostrarMensaje(res.mensaje, 'ok');
+      limpiar();
+
+    }).catch(function(err) {
+      mostrarMensaje(err.message, 'error');
+    });
+  }
+
+
+  function confirmarRetorno() {
+    if (!codigoActual) {
+      mostrarMensaje('Primero escaneá o buscá una HR.', 'error');
+      return;
     }
-  });
 
-  let siguienteNumero = mayorNumero + 1;
-  let nuevoToken = '';
+    mostrarMensaje('Registrando retorno...', '');
 
-  do {
-    nuevoToken = 'T' + String(siguienteNumero).padStart(6, '0');
-    siguienteNumero++;
-  } while (tokensExistentes.has(nuevoToken));
-
-  return nuevoToken;
-}
-
-
-function extraerToken_(texto) {
-  const limpio = String(texto || '').trim();
-
-  if (limpio.includes('=')) {
-    const partes = limpio.split('|');
-
-    for (const p of partes) {
-      const kv = p.split('=');
-
-      if (kv.length >= 2) {
-        const key = kv[0].trim().toUpperCase();
-        const value = kv.slice(1).join('=').trim();
-
-        if (key === 'TOKEN' || key === 'TOKENQR' || key === 'HR') {
-          return value;
-        }
+    apiCall('registrarRetorno', {
+      codigo: codigoActual,
+      estadoRetorno: document.getElementById('estadoRetornoInput').value,
+      observacion: document.getElementById('observacionRetorno').value
+    }).then(function(res) {
+      if (!res.ok) {
+        mostrarMensaje(res.mensaje || 'No se pudo registrar retorno.', 'error');
+        return;
       }
-    }
+
+      mostrarMensaje(res.mensaje, 'ok');
+      limpiar();
+
+    }).catch(function(err) {
+      mostrarMensaje(err.message, 'error');
+    });
   }
 
-  return limpio;
-}
 
-
-function buscarFilaPorCodigo_(codigo) {
-  const token = extraerToken_(codigo);
-
-  const sh = getSheet_(HOJA_HR);
-  const map = headerMap_(sh);
-  const data = sh.getDataRange().getValues();
-
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-
-    const tokenFila = String(row[map['TokenQR'] - 1] || '').trim();
-    const hrFila = String(row[map['HR'] - 1] || '').trim();
-
-    if (tokenFila === token || hrFila === token) {
-      return {
-        ok: true,
-        sheet: sh,
-        map: map,
-        row: row,
-        fila: i + 1
-      };
+  function confirmarIncidencia() {
+    if (!codigoActual) {
+      mostrarMensaje('Primero escaneá o buscá una HR.', 'error');
+      return;
     }
+
+    const observacion = document.getElementById('observacionIncidencia').value.trim();
+
+    if (!observacion) {
+      mostrarMensaje('Escribí una observación de incidencia.', 'error');
+      return;
+    }
+
+    mostrarMensaje('Registrando incidencia...', '');
+
+    apiCall('registrarIncidencia', {
+      codigo: codigoActual,
+      observacion: observacion
+    }).then(function(res) {
+      if (!res.ok) {
+        mostrarMensaje(res.mensaje || 'No se pudo registrar incidencia.', 'error');
+        return;
+      }
+
+      mostrarMensaje(res.mensaje, 'ok');
+      limpiar();
+
+    }).catch(function(err) {
+      mostrarMensaje(err.message, 'error');
+    });
   }
 
-  return {
-    ok: false,
-    mensaje: 'No encontré la HR para el código: ' + token
-  };
-}
 
+  /****************************************************
+   * LIMPIEZA
+   ****************************************************/
 
-function armarRespuestaHR_(row, map, fila) {
-  return {
-    ok: true,
-    fila: fila,
-    codigo: row[map['TokenQR'] - 1] || row[map['HR'] - 1] || '',
-    hr: row[map['HR'] - 1] || '',
-    token: row[map['TokenQR'] - 1] || '',
-    choferPlanificado: row[map['ChoferPlanificado'] - 1] || '',
-    vueltaPlanificada: normalizarVuelta_(row[map['VueltaPlanificada'] - 1]),
-    estadoActual: normalizarEstadoOperativo_(row[map['EstadoActual'] - 1]),
-    choferSalida: row[map['ChoferSalida'] - 1] || '',
-    vueltaSalida: normalizarVuelta_(row[map['VueltaSalida'] - 1]),
-    horaSalida: formatearFecha_(row[map['HoraSalida'] - 1]),
-    horaRetorno: formatearFecha_(row[map['HoraRetorno'] - 1]),
-    estadoRetorno: row[map['EstadoRetorno'] - 1] || '',
-    observacionSalida: row[map['ObservacionSalida'] - 1] || '',
-    observacionRetorno: row[map['ObservacionRetorno'] - 1] || ''
-  };
-}
+  function limpiar() {
+    codigoActual = null;
+    hrActual = null;
 
-function obtenerChoferes_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  asegurarHojaConHeaders_(ss, HOJA_CHOFERES, HEADERS_CHOFERES);
+    document.getElementById('cardDatos').classList.add('hidden');
 
-  const sh = getSheet_(HOJA_CHOFERES);
-  const lastRow = sh.getLastRow();
+    const inputManual = document.getElementById('busquedaManual');
+    inputManual.value = '';
+    inputManual.blur();
 
-  if (lastRow < 2) return [];
-
-  const map = headerMap_(sh);
-  const data = sh.getRange(2, 1, lastRow - 1, sh.getLastColumn()).getValues();
-
-  return data
-    .filter(row => {
-      const activo = String(row[map['Activo'] - 1] || '').trim().toUpperCase();
-      return activo === 'SI' || activo === 'SÍ' || activo === 'YES' || activo === '1' || activo === 'ACTIVO';
-    })
-    .map(row => String(row[map['Chofer'] - 1] || '').trim())
-    .filter(x => x !== '');
-}
-
-function registrarMovimiento_(obj) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  asegurarHojaConHeaders_(ss, HOJA_MOV, HEADERS_MOV);
-
-  const sh = getSheet_(HOJA_MOV);
-  const ahora = new Date();
-
-  let usuario = '';
-
-  try {
-    usuario = Session.getActiveUser().getEmail() || '';
-  } catch (e) {
-    usuario = '';
+    document.getElementById('hrSalida').value = '';
+    document.getElementById('observacionSalida').value = '';
+    document.getElementById('observacionRetorno').value = '';
+    document.getElementById('observacionCancelarSalida').value = '';
+    document.getElementById('observacionIncidencia').value = '';
+    document.getElementById('alertas').innerHTML = '';
   }
 
-  sh.appendRow([
-    ahora,
-    obj.accion || '',
-    obj.hr || '',
-    obj.token || '',
-    obj.chofer || '',
-    obj.vuelta || '',
-    obj.estadoRetorno || '',
-    usuario,
-    obj.observacion || ''
-  ]);
 
-  sh.getRange('A:A').setNumberFormat('dd/mm/yyyy hh:mm:ss');
-  sh.autoResizeColumns(1, HEADERS_MOV.length);
-}
-
-function formatearFecha_(valor) {
-  if (!valor) return '';
-
-  if (!(valor instanceof Date)) {
-    return String(valor);
+  function mostrarMensaje(texto, tipo) {
+    const div = document.getElementById('mensaje');
+    div.className = 'card ' + tipo;
+    div.innerHTML = texto;
   }
+</script>
 
-  const tz = Session.getScriptTimeZone();
-  return Utilities.formatDate(valor, tz, 'dd/MM/yyyy HH:mm:ss');
-}
-
-
-function normalizarFechaKey_(valor) {
-  if (!valor) return '';
-
-  let fecha;
-
-  if (valor instanceof Date) {
-    fecha = valor;
-  } else {
-    const texto = String(valor).trim();
-
-    // Intenta formato dd/mm/yyyy
-    const partes = texto.split('/');
-    if (partes.length === 3) {
-      const dia = Number(partes[0]);
-      const mes = Number(partes[1]) - 1;
-      const anio = Number(partes[2]);
-      fecha = new Date(anio, mes, dia);
-    } else {
-      fecha = new Date(texto);
-    }
-  }
-
-  if (!(fecha instanceof Date) || isNaN(fecha.getTime())) {
-    return '';
-  }
-
-  const tz = Session.getScriptTimeZone();
-  return Utilities.formatDate(fecha, tz, 'yyyy-MM-dd');
-}
-
-function obtenerPeriodo_(fecha) {
-  const fechaKey = normalizarFechaKey_(fecha);
-
-  if (!fechaKey) return '';
-
-  // Devuelve formato yyyy-MM, por ejemplo 2026-06
-  return fechaKey.substring(0, 7);
-}
-
-/****************************************************
- * API PARA PÁGINA EXTERNA
- ****************************************************/
-
-function apiRouter_(e) {
-  const p = e.parameter || {};
-  const callback = limpiarCallback_(p.callback || 'callback');
-
-  let resultado;
-
-  try {
-    if (p.key !== API_KEY) {
-      throw new Error('Clave API inválida.');
-    }
-
-    const action = String(p.action || '').trim();
-
-    if (action === 'ping') {
-      resultado = {
-        ok: true,
-        mensaje: 'API funcionando correctamente.'
-      };
-    }
-
-    else if (action === 'datosIniciales') {
-      resultado = obtenerDatosIniciales();
-      resultado.ok = true;
-    }
-
-    else if (action === 'buscarHR') {
-      resultado = buscarHR(p.codigo || '');
-    }
-
-    else if (action === 'registrarSalida') {
-      resultado = registrarSalida({
-        codigo: p.codigo || '',
-        hr: p.hr || '',
-        chofer: p.chofer || '',
-        vuelta: p.vuelta || '',
-        observacion: p.observacion || ''
-      });
-    }
-
-    else if (action === 'registrarSalidaRapida' || action === 'registrarsalidarapida') {
-      resultado = registrarSalida({
-        codigo: p.codigo || '',
-        hr: p.hr || '',
-        chofer: p.chofer || '',
-        vuelta: p.vuelta || '',
-        observacion: p.observacion || ''
-      });
-    }
-
-
-    else if (action === 'registrarCancelarSalida') {
-      resultado = registrarCancelarSalida({
-        codigo: p.codigo || '',
-        observacion: p.observacion || ''
-      });
-    }
-
-    else if (action === 'registrarRetorno') {
-      resultado = registrarRetorno({
-        codigo: p.codigo || '',
-        estadoRetorno: p.estadoRetorno || '',
-        observacion: p.observacion || ''
-      });
-    }
-
-    else if (action === 'registrarIncidencia') {
-      resultado = registrarIncidencia({
-        codigo: p.codigo || '',
-        observacion: p.observacion || ''
-      });
-    }
-
-    else {
-      resultado = {
-        ok: false,
-        mensaje: 'Acción no reconocida: ' + action
-      };
-    }
-
-  } catch (err) {
-    resultado = {
-      ok: false,
-      mensaje: err.message
-    };
-  }
-
-  const salida = callback + '(' + JSON.stringify(resultado) + ');';
-
-  return ContentService
-    .createTextOutput(salida)
-    .setMimeType(ContentService.MimeType.JAVASCRIPT);
-}
-
-
-function limpiarCallback_(nombre) {
-  const limpio = String(nombre || '').trim();
-
-  const esValido = /^[a-zA-Z_$][0-9a-zA-Z_$]*$/.test(limpio);
-
-  if (esValido) {
-    return limpio;
-  }
-
-  return 'callback';
-}
-function normalizarVuelta_(valor) {
-  if (!valor) return '';
-
-  if (valor instanceof Date) {
-    const tz = Session.getScriptTimeZone();
-    const dia = Utilities.formatDate(valor, tz, 'd');
-    const mes = Utilities.formatDate(valor, tz, 'M');
-    return dia + '-' + mes;
-  }
-
-  return String(valor).trim();
-}
+</body>
+</html>
