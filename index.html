@@ -128,15 +128,32 @@
     .checkbox-row {
       display: flex;
       align-items: center;
-      gap: 10px;
-      margin-top: 12px;
+      gap: 14px;
+      margin-top: 14px;
+      padding: 16px;
+      border: 2px solid #ccc;
+      border-radius: 12px;
+      background: #f8f9fa;
       font-weight: bold;
+      font-size: 20px;
+      cursor: pointer;
     }
 
     .checkbox-row input {
-      width: auto;
+      width: 28px;
+      height: 28px;
       margin: 0;
-      transform: scale(1.25);
+      flex: 0 0 auto;
+    }
+
+    .checkbox-row span {
+      flex: 1;
+    }
+
+    .checkbox-row.activo {
+      border-color: #d93025;
+      background: #fce8e6;
+      color: #b3261e;
     }
     
   </style>
@@ -202,9 +219,9 @@
       <label>Vuelta real</label>
       <select id="vueltaReal"></select>
 
-      <label class="checkbox-row">
+      <label class="checkbox-row" id="boxLargaDistancia">
         <input type="checkbox" id="largaDistanciaSalida">
-        <span>Larga distancia</span>
+        <span>VIAJE DE LARGA DISTANCIA</span>
       </label>
 
       <label>Observación salida</label>
@@ -274,6 +291,8 @@
     actualizarModo();
     configurarEnterManual();
     obtenerDatosIniciales();
+
+    document.getElementById('largaDistanciaSalida').addEventListener('change', actualizarVisualLargaDistancia);
   };
 
 
@@ -286,6 +305,19 @@
         buscarManual();
       }
     });
+  }
+
+  function actualizarVisualLargaDistancia() {
+    const chk = document.getElementById('largaDistanciaSalida');
+    const box = document.getElementById('boxLargaDistancia');
+
+    if (!chk || !box) return;
+
+    if (chk.checked) {
+      box.classList.add('activo');
+    } else {
+      box.classList.remove('activo');
+    }
   }
 
 
@@ -571,6 +603,8 @@
 
     document.getElementById('largaDistanciaSalida').checked =
       String(res.largaDistancia || '').trim().toUpperCase() === 'SI';
+    
+    actualizarVisualLargaDistancia();
 
     document.getElementById('choferPlanificado').textContent = res.choferPlanificado || '';
     document.getElementById('vueltaPlanificada').textContent = normalizarVueltaPantalla(res.vueltaPlanificada);
@@ -875,6 +909,7 @@
     document.getElementById('hrSalida').value = '';
     document.getElementById('observacionSalida').value = '';
     document.getElementById('largaDistanciaSalida').checked = false;
+    actualizarVisualLargaDistancia();
     document.getElementById('observacionRetorno').value = '';
     document.getElementById('observacionCancelarSalida').value = '';
     document.getElementById('observacionIncidencia').value = '';
