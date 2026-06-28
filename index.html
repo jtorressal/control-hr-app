@@ -125,6 +125,20 @@
       color: #555;
       margin-top: 6px;
     }
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 12px;
+      font-weight: bold;
+    }
+
+    .checkbox-row input {
+      width: auto;
+      margin: 0;
+      transform: scale(1.25);
+    }
+    
   </style>
 </head>
 
@@ -187,6 +201,11 @@
 
       <label>Vuelta real</label>
       <select id="vueltaReal"></select>
+
+      <label class="checkbox-row">
+        <input type="checkbox" id="largaDistanciaSalida">
+        <span>Larga distancia</span>
+      </label>
 
       <label>Observación salida</label>
       <textarea id="observacionSalida" rows="3" placeholder="Opcional"></textarea>
@@ -550,6 +569,9 @@
     document.getElementById('hr').textContent = res.hr || '(sin cargar)';
     document.getElementById('hrSalida').value = res.hr || '';
 
+    document.getElementById('largaDistanciaSalida').checked =
+      String(res.largaDistancia || '').trim().toUpperCase() === 'SI';
+
     document.getElementById('choferPlanificado').textContent = res.choferPlanificado || '';
     document.getElementById('vueltaPlanificada').textContent = normalizarVueltaPantalla(res.vueltaPlanificada);
     document.getElementById('estadoActual').textContent = res.estadoActual || '';
@@ -693,6 +715,7 @@
     const hr = document.getElementById('hrSalida').value.trim();
     const chofer = document.getElementById('choferReal').value;
     const vuelta = document.getElementById('vueltaReal').value;
+    const largaDistancia = document.getElementById('largaDistanciaSalida').checked ? 'SI' : '';
     const observacion = document.getElementById('observacionSalida').value;
 
     if (!hr) {
@@ -718,6 +741,7 @@
       hr: hr,
       chofer: chofer,
       vuelta: vuelta,
+      largaDistancia: largaDistancia,
       observacion: observacion
     }).then(function(res) {
       if (!res.ok) {
@@ -850,6 +874,7 @@
 
     document.getElementById('hrSalida').value = '';
     document.getElementById('observacionSalida').value = '';
+    document.getElementById('largaDistanciaSalida').checked = false;
     document.getElementById('observacionRetorno').value = '';
     document.getElementById('observacionCancelarSalida').value = '';
     document.getElementById('observacionIncidencia').value = '';
