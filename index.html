@@ -53,6 +53,11 @@
       margin-top: 12px;
     }
 
+    button:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+    }
+
     .btn-primary {
       background: #1a73e8;
       color: white;
@@ -356,8 +361,9 @@
           }
         } catch (e) {}
 
-        reject(new Error('Apps Script tardó demasiado en responder. Revisá la planilla antes de volver a confirmar, porque la acción puede haberse registrado.'));
-      }, 45000);
+        const err = new Error('TIMEOUT_APPS_SCRIPT');
+        err.esTimeout = true;
+        reject(err);
 
       window[callbackName] = function(data) {
         if (terminado) return;
@@ -721,6 +727,128 @@
   }
 
 
+   let accionEnCurso = false;
+
+function bloquearAcciones(bloquear) {
+  const botones = document.querySelectorAll('#cardDatos button');
+
+  botones.forEach(function(btn) {
+    btn.disabled = bloquear;
+  });
+}
+
+function iniciarAccion(texto) {
+  if (accionEnCurso) {
+    mostrarMensaje('Ya hay una acción en curso. Esperá a que termine antes de volver a tocar.', 'error');
+    return false;
+  }
+
+  accionEnCurso = true;
+  bloquearAcciones(true);
+  mostrarMensaje(texto, '');
+
+  return true;
+}
+
+function finalizarAccion() {
+  accionEnCurso = false;
+  bloquearAcciones(false);
+}
+
+function esTimeoutAppsScript(err) {
+  return err && (err.esTimeout || err.message === 'TIMEOUT_APPS_SCRIPT');
+}
+
+function verificarAccionTrasTimeout(tipoAccion) {
+  mostrarMensaje(
+    'Apps Script está tardando. Verificando automáticamente si la acción se registró...',
+    ''
+  );
+
+  return new Promise(function(resolve) {
+    setTimeout(function() {
+      apiCall('buscarHR', {
+        codigo: codigoActual
+      }).then(function(res) {
+        if (!res.ok) {
+          mostrarMensaje(
+            'No pude verificar la HR después de la demora. Revisá la planilla antes de volver a confirmar. ' +
+            (res.mensaje || ''),
+            'error'
+          );
+          resolve(false);
+          return;
+        }
+
+        const estado = String(res.estadoActual || '').trim().toUpperCase();
+        const estadoRetorno = String(res.estadoRetorno || '').trim().toUpperCase();
+
+        let accionConfirmada = false;
+        let mensajeOk = '';
+
+        if (tipoAccion === 'SALIDA' && estado === 'EN CALLE') {
+          accionConfirmada = true;
+          mensajeOk = 'Salida registrada correctamente. Apps Script respondió tarde, pero la planilla ya quedó actualizada.';
+        }
+
+        if (tipoAccion === 'RETORNO' && estado === 'RETORNADA') {
+          accionConfirmada = true;
+          mensajeOk = 'Retorno registrado correctamente. Apps Script respondió tarde, pero la planilla ya quedó actualizada.';
+        }
+
+        if (tipoAccion === 'CANCELAR_SALIDA' && estado === 'SALIDA_CANCELADA') {
+          accionConfirmada = true;
+          mensajeOk = 'Salida cancelada correctamente. Apps Script respondió tarde, pero la planilla ya quedó actualizada.';
+        }
+
+        if (tipoAccion === 'INCIDENCIA' && estado === 'INCIDENCIA') {
+          accionConfirmada = true;
+          mensajeOk = 'Incidencia registrada correctamente. Apps Script respondió tarde, pero la planilla ya quedó actualizada.';
+        }
+
+        if (accionConfirmada) {
+          mostrarMensaje(mensajeOk, 'ok');
+          limpiar();
+          resolve(true);
+          return;
+        }
+
+        mostrarDatos(res);
+
+        mostrarMensaje(
+          'No pude confirmar que la acción se haya registrado. Revisá los datos que aparecen en pantalla. ' +
+          'Si siguen igual, recién ahí volvé a intentar.',
+          'error'
+        );
+
+        resolve(false);
+
+      }).catch(function(err) {
+        mostrarMensaje(
+          'No pude verificar la HR después de la demora. Revisá la planilla antes de volver a confirmar. ' +
+          (err.message || ''),
+          'error'
+        );
+        resolve(false);
+      });
+    }, 3000);
+  });
+}
+
+function manejarErrorAccion(err, tipoAccion) {
+  if (esTimeoutAppsScript(err)) {
+    verificarAccionTrasTimeout(tipoAccion)
+      .then(function() {
+        finalizarAccion();
+      });
+
+    return;
+  }
+
+  mostrarMensaje(err.message || 'Ocurrió un error al registrar la acción.', 'error');
+  finalizarAccion();
+} 
+
   /****************************************************
    * REGISTROS
    ****************************************************/
@@ -769,7 +897,7 @@
     }
 
 
-    mostrarMensaje('Registrando salida...', '');
+    if (!iniciarAccion('Registrando salida...')) return;
 
     apiCall('registrarSalida', {
       codigo: codigoActual,
@@ -781,10 +909,12 @@
     }).then(function(res) {
       if (!res.ok) {
         mostrarMensaje(res.mensaje || 'No se pudo registrar salida.', 'error');
+        finalizarAccion();
         return;
       }
 
       mostrarMensaje(res.mensaje, 'ok');
+      finalizarAccion();
       limpiar();
 
     }).catch(function(err) {
@@ -813,7 +943,7 @@
     }
 
 
-    mostrarMensaje('Cancelando salida...', '');
+    if (!iniciarAccion('Cancelando salida...')) return;
 
     apiCall('registrarCancelarSalida', {
       codigo: codigoActual,
@@ -821,10 +951,12 @@
     }).then(function(res) {
       if (!res.ok) {
         mostrarMensaje(res.mensaje || 'No se pudo cancelar la salida.', 'error');
+        finalizarAccion();
         return;
       }
 
       mostrarMensaje(res.mensaje, 'ok');
+      finalizarAccion();
       limpiar();
 
     }).catch(function(err) {
@@ -839,7 +971,7 @@
       return;
     }
 
-    mostrarMensaje('Registrando retorno...', '');
+    if (!iniciarAccion('Registrando retorno...')) return;
 
     apiCall('registrarRetorno', {
       codigo: codigoActual,
@@ -848,10 +980,12 @@
     }).then(function(res) {
       if (!res.ok) {
         mostrarMensaje(res.mensaje || 'No se pudo registrar retorno.', 'error');
+        finalizarAccion();
         return;
       }
 
       mostrarMensaje(res.mensaje, 'ok');
+      finalizarAccion();
       limpiar();
 
     }).catch(function(err) {
@@ -873,7 +1007,7 @@
       return;
     }
 
-    mostrarMensaje('Registrando incidencia...', '');
+    if (!iniciarAccion('Registrando incidencia...')) return;
 
     apiCall('registrarIncidencia', {
       codigo: codigoActual,
@@ -881,10 +1015,12 @@
     }).then(function(res) {
       if (!res.ok) {
         mostrarMensaje(res.mensaje || 'No se pudo registrar incidencia.', 'error');
+        finalizarAccion();
         return;
       }
 
       mostrarMensaje(res.mensaje, 'ok');
+      finalizarAccion();
       limpiar();
 
     }).catch(function(err) {
