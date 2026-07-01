@@ -973,6 +973,14 @@ function manejarErrorAccion(err, tipoAccion) {
       return;
     }
 
+    const estadoActual = String(document.getElementById('estadoActual').textContent || '').trim().toUpperCase();
+
+    if (estadoActual !== 'EN CALLE') {
+      mostrarMensaje('No se puede registrar retorno. La HR debe estar EN CALLE. Estado actual: ' + estadoActual,
+      'error');
+    return;
+  }
+
     if (!iniciarAccion('Registrando retorno...')) return;
 
     apiCall('registrarRetorno', {
