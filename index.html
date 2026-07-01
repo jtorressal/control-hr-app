@@ -332,66 +332,68 @@
    ****************************************************/
 
   function apiCall(action, params = {}) {
-    return new Promise(function(resolve, reject) {
-      const callbackName = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
-      let terminado = false;
+  return new Promise(function(resolve, reject) {
+    const callbackName = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
+    let terminado = false;
 
-      const query = new URLSearchParams();
-      query.set('api', '1');
-      query.set('key', API_KEY);
-      query.set('action', action);
-      query.set('callback', callbackName);
-      query.set('_', Date.now());
+    const query = new URLSearchParams();
+    query.set('api', '1');
+    query.set('key', API_KEY);
+    query.set('action', action);
+    query.set('callback', callbackName);
+    query.set('_', Date.now());
 
-      Object.keys(params).forEach(function(k) {
-        query.set(k, params[k] == null ? '' : String(params[k]));
-      });
-
-      const script = document.createElement('script');
-
-      const timer = setTimeout(function() {
-        if (terminado) return;
-
-        terminado = true;
-
-        try {
-          delete window[callbackName];
-          if (script && script.parentNode) {
-            script.parentNode.removeChild(script);
-          }
-        } catch (e) {}
-
-        const err = new Error('TIMEOUT_APPS_SCRIPT');
-        err.esTimeout = true;
-        reject(err);
-
-      window[callbackName] = function(data) {
-        if (terminado) return;
-
-        terminado = true;
-        clearTimeout(timer);
-
-        try {
-          delete window[callbackName];
-          if (script && script.parentNode) {
-            script.parentNode.removeChild(script);
-          }
-        } catch (e) {}
-
-        resolve(data);
-      };
-
-      script.async = true;
-      script.src = API_URL.trim() + '?' + query.toString();
-
-      script.onerror = function() {
-        console.warn('Advertencia: evento onerror del script JSONP.');
-      };
-
-      document.body.appendChild(script);
+    Object.keys(params).forEach(function(k) {
+      query.set(k, params[k] == null ? '' : String(params[k]));
     });
-  }
 
+    const script = document.createElement('script');
+
+    const timer = setTimeout(function() {
+      if (terminado) return;
+
+      terminado = true;
+
+      try {
+        delete window[callbackName];
+
+        if (script && script.parentNode) {
+          script.parentNode.removeChild(script);
+        }
+      } catch (e) {}
+
+      const err = new Error('TIMEOUT_APPS_SCRIPT');
+      err.esTimeout = true;
+      reject(err);
+    }, 45000);
+
+    window[callbackName] = function(data) {
+      if (terminado) return;
+
+      terminado = true;
+      clearTimeout(timer);
+
+      try {
+        delete window[callbackName];
+
+        if (script && script.parentNode) {
+          script.parentNode.removeChild(script);
+        }
+      } catch (e) {}
+
+      resolve(data);
+    };
+
+    script.async = true;
+    script.src = API_URL.trim() + '?' + query.toString();
+
+    script.onerror = function() {
+      console.warn('Advertencia: evento onerror del script JSONP.');
+    };
+
+    document.body.appendChild(script);
+  });
+}
 
   /****************************************************
    * DATOS INICIALES
@@ -918,7 +920,7 @@ function manejarErrorAccion(err, tipoAccion) {
       limpiar();
 
     }).catch(function(err) {
-      mostrarMensaje(err.message, 'error');
+      manejarErrorAccion(err, 'SALIDA');
     });
   }
 
@@ -960,7 +962,7 @@ function manejarErrorAccion(err, tipoAccion) {
       limpiar();
 
     }).catch(function(err) {
-      mostrarMensaje(err.message, 'error');
+      manejarErrorAccion(err, 'CANCELAR_SALIDA');
     });
   }
 
@@ -989,7 +991,7 @@ function manejarErrorAccion(err, tipoAccion) {
       limpiar();
 
     }).catch(function(err) {
-      mostrarMensaje(err.message, 'error');
+      manejarErrorAccion(err, 'RETORNO');
     });
   }
 
@@ -1024,7 +1026,7 @@ function manejarErrorAccion(err, tipoAccion) {
       limpiar();
 
     }).catch(function(err) {
-      mostrarMensaje(err.message, 'error');
+      manejarErrorAccion(err, 'INCIDENCIA');
     });
   }
 
